@@ -1,6 +1,7 @@
 const std = @import("std");
 const rl = @import("raylib");
 const rgui = @import("raygui");
+const gl = rl.gl;
 
 const Vector3 = rl.Vector3;
 const Vector2 = rl.Vector2;
@@ -14,53 +15,173 @@ const AppMode = enum {
     Game,
 };
 
-
 const Plane = enum {
     X,
     Y,
     Z,
 };
 
+pub const AxisType = enum {
+    X,
+    Y,
+    Z,
+};
+
+pub const Axis = struct {
+    position: Vector3,
+    length: f32,
+    width: f32,
+    color: Color,
+    axis_type: AxisType,
+
+    len_scale_factor: f32 = 0,
+    width_scale_factor: f32 = 0,
+
+    pub fn update(self: *Axis, origin: Vector3) void {
+        self.position = origin;
+        const distance_to_camera = rl.Vector3.distance(self.position, state.main_camera.position);
+
+        const base_size = 1;
+        const base_length = 1.0;
+
+        self.len_scale_factor = base_length * distance_to_camera / 10.0;
+        self.width_scale_factor = base_size * distance_to_camera / 10.0;
+    }
+
+    pub fn render(self: Axis) void {
+        const scaled_length = self.length * self.len_scale_factor;
+        const scaled_width = self.width * self.width_scale_factor;
+
+        switch (self.axis_type) {
+            AxisType.X => {
+                const adjusted_position = Vector3{
+                    .x = self.position.x + (self.length / 2.0),
+                    .y = self.position.y,
+                    .z = self.position.z,
+                };
+                rl.drawCube(adjusted_position, scaled_length, scaled_width, scaled_width, self.color);
+            },
+            AxisType.Y => {
+                const adjusted_position = Vector3{
+                    .x = self.position.x,
+                    .y = self.position.y + (self.length / 2.0),
+                    .z = self.position.z,
+                };
+                rl.drawCube(adjusted_position, scaled_width, scaled_length, scaled_width, self.color);
+            },
+            AxisType.Z => {
+                const adjusted_position = Vector3{
+                    .x = self.position.x,
+                    .y = self.position.y,
+                    .z = self.position.z + (self.length / 2.0),
+                };
+                rl.drawCube(adjusted_position, scaled_width, scaled_width, scaled_length, self.color);
+            },
+        }
+    }
+
+    pub fn checkRayIntersection(self: Axis, ray: rl.Ray) bool {
+        const scaled_length = self.length * self.len_scale_factor;
+        const scaled_width = self.width * self.width_scale_factor;
+
+        const bounding_box = rl.BoundingBox{
+            .min = switch (self.axis_type) {
+                AxisType.X => Vector3{
+                    .x = self.position.x,
+                    .y = self.position.y - (scaled_width / 2.0),
+                    .z = self.position.z - (scaled_width / 2.0),
+                },
+                AxisType.Y => Vector3{
+                    .x = self.position.x - (scaled_width / 2.0),
+                    .y = self.position.y,
+                    .z = self.position.z - (scaled_width / 2.0),
+                },
+                AxisType.Z => Vector3{
+                    .x = self.position.x - (scaled_width / 2.0),
+                    .y = self.position.y - (scaled_width / 2.0),
+                    .z = self.position.z,
+                },
+            },
+            .max = switch (self.axis_type) {
+                AxisType.X => Vector3{
+                    .x = self.position.x + scaled_length,
+                    .y = self.position.y + (scaled_width / 2.0),
+                    .z = self.position.z + (scaled_width / 2.0),
+                },
+                AxisType.Y => Vector3{
+                    .x = self.position.x + (scaled_width / 2.0),
+                    .y = self.position.y + scaled_length,
+                    .z = self.position.z + (scaled_width / 2.0),
+                },
+                AxisType.Z => Vector3{
+                    .x = self.position.x + (scaled_width / 2.0),
+                    .y = self.position.y + (scaled_width / 2.0),
+                    .z = self.position.z + scaled_length,
+                },
+            },
+        };
+
+        const info = rl.getRayCollisionBox(ray, bounding_box);
+        return info.hit;
+    }
+};
+
+
 const Gizmo = struct {
     position: Vector3,
     selected_plane: ?Plane = undefined,
+    axis: [3]Axis = undefined,
 
     pub fn init() Gizmo {
         return Gizmo{
             .position = Vector3 { .x = 0, .y = 0, .z = 0 },
-            .selected_plane = null,
+            .selected_plane = undefined,
+            .axis = [_]Axis{
+                Axis{
+                    .position = Vector3{ .x = 0, .y = 0, .z = 0 },
+                    .length = 2.0,
+                    .width = 0.1,
+                    .color = Color.red,
+                    .axis_type = AxisType.X,
+                },
+                Axis{
+                    .position = Vector3{ .x = 0, .y = 0, .z = 0 },
+                    .length = 2.0,
+                    .width = 0.1,
+                    .color = Color.green,
+                    .axis_type = AxisType.Y,
+                },
+                Axis{
+                    .position = Vector3{ .x = 0, .y = 0, .z = 0 },
+                    .length = 2.0,
+                    .width = 0.1,
+                    .color = Color.blue,
+                    .axis_type = AxisType.Z,
+                },
+            },
         };
     }
 
     pub fn update(self: *Gizmo) void {
+        Axis.update(&self.axis[0], self.position);
+        Axis.update(&self.axis[1], self.position);
+        Axis.update(&self.axis[2], self.position);
+
         self.selectPlane();
         self.updatePosition(state.mouse_delta);
-    }
-
-    fn intersectPlaneXY(self: *Gizmo, ray: rl.Ray) bool {
-        const size = Vector2.init(1, 1);
-        // Определяем четыре угловых точки квадрата на плоскости XY, с центром в gizmo.position
-        const p1 = rl.Vector3 { .x = self.position.x - size.x / 2, .y = self.position.y - size.y / 2, .z = self.position.z };
-        const p2 = rl.Vector3 { .x = self.position.x + size.x / 2, .y = self.position.y - size.y / 2, .z = self.position.z };
-        const p3 = rl.Vector3 { .x = self.position.x + size.x / 2, .y = self.position.y + size.y / 2, .z = self.position.z };
-        const p4 = rl.Vector3 { .x = self.position.x - size.x / 2, .y = self.position.y + size.y / 2, .z = self.position.z };
-
-        const collision = rl.getRayCollisionQuad(ray, p1, p2, p3, p4);
-        return collision.hit;
     }
 
     pub fn selectPlane(self: *Gizmo) void {
         if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left)) {
             const ray = state.getRayFromCamera();
-            if (self.intersectPlaneXY(ray)) {
-                self.selected_plane = .Z;
-                std.debug.print("Intersected with xy\n", .{});
+            if (self.axis[0].checkRayIntersection(ray)) {
+                std.debug.print("Intersected with X\n", .{});
             }
-            // else if (intersectsPlaneXZ(mousePosition, self.position)) {
-            //     self.selectedPlane = .Y;
-            // } else if (intersectsPlaneYZ(mousePosition, self.position)) {
-            //     self.selectedPlane = .X;
-            // }
+            else if (self.axis[1].checkRayIntersection(ray)) {
+                std.debug.print("Intersected with Y\n", .{});
+            } else if (self.axis[2].checkRayIntersection(ray)) {
+                std.debug.print("Intersected with Z\n", .{});
+            }
         }
         else {
             self.selected_plane = undefined;
@@ -79,7 +200,9 @@ const Gizmo = struct {
     }
 
     pub fn render(self: *Gizmo) void {
-        rl.drawCube(self.position, 1, 1, 3, Color.green);
+        for(self.axis) |a| {
+            a.render();
+        }
     }
 };
 
@@ -211,7 +334,7 @@ fn drawCursor() void {
 
 fn render() !void {
     rl.beginMode3D(state.main_camera);
-    rl.drawCube(state.cube_position, 2.0, 2.0, 2.0, rl.Color.red);
+    rl.drawCube(state.cube_position, state.cube_size.x, state.cube_size.y, state.cube_size.z, rl.Color.gray);
 
     if (state.touch_cube) {
         rl.drawCubeWires(state.cube_position, state.cube_size.x + 0.2, state.cube_size.y + 0.2, state.cube_size.z + 0.2, Color.dark_green);
@@ -220,9 +343,12 @@ fn render() !void {
 
     rl.drawGrid(100.0, 1.0);
 
+    // todo: does not work((
+    gl.rlDisableDepthTest();
+    state.gizmo.render();
+    gl.rlEnableDepthTest();
 
     rl.endMode3D();
-    state.gizmo.render();
 
     rl.drawText(rl.textFormat("Fps: %d, Delta: %.6f", .{ rl.getFPS(), state.delta }), 10, 10, 30, Color.green);
 
