@@ -329,7 +329,9 @@ fn update() !void {
 fn drawCursor() void {
     const screenWidth = rl.getScreenWidth();
     const screenHeight = rl.getScreenHeight();
-    rl.drawRectangle(@divExact(screenWidth, 2), @divExact(screenHeight, 2), 10, 10, Color.green);
+    const x = @divTrunc(screenWidth, 2);
+    const y = @divTrunc(screenHeight, 2);
+    rl.drawRectangle(x, y, 10, 10, Color.green);
 }
 
 fn render() !void {
