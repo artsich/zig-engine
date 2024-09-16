@@ -15,12 +15,6 @@ const AppMode = enum {
     Game,
 };
 
-const Plane = enum {
-    X,
-    Y,
-    Z,
-};
-
 pub const AxisType = enum {
     X,
     Y,
@@ -37,11 +31,21 @@ pub const Axis = struct {
     len_scale_factor: f32 = 0,
     width_scale_factor: f32 = 0,
 
+    pub fn init(color: Color, axis_type: AxisType) Axis {
+        return .{
+            .position = Vector3{ .x = 0, .y = 0, .z = 0 },
+            .length = 2.0,
+            .width = 0.1,
+            .color = color,
+            .axis_type = axis_type,
+        };
+    }
+
     pub fn update(self: *Axis, origin: Vector3) void {
         self.position = origin;
         const distance_to_camera = rl.Vector3.distance(self.position, state.main_camera.position);
 
-        const base_size = 1;
+        const base_size = 1.2;
         const base_length = 1.0;
 
         self.len_scale_factor = base_length * distance_to_camera / 10.0;
@@ -55,7 +59,7 @@ pub const Axis = struct {
         switch (self.axis_type) {
             AxisType.X => {
                 const adjusted_position = Vector3{
-                    .x = self.position.x + (self.length / 2.0),
+                    .x = self.position.x + (scaled_length / 2.0),
                     .y = self.position.y,
                     .z = self.position.z,
                 };
@@ -64,7 +68,7 @@ pub const Axis = struct {
             AxisType.Y => {
                 const adjusted_position = Vector3{
                     .x = self.position.x,
-                    .y = self.position.y + (self.length / 2.0),
+                    .y = self.position.y + (scaled_length / 2.0),
                     .z = self.position.z,
                 };
                 rl.drawCube(adjusted_position, scaled_width, scaled_length, scaled_width, self.color);
@@ -73,7 +77,7 @@ pub const Axis = struct {
                 const adjusted_position = Vector3{
                     .x = self.position.x,
                     .y = self.position.y,
-                    .z = self.position.z + (self.length / 2.0),
+                    .z = self.position.z + (scaled_length / 2.0),
                 };
                 rl.drawCube(adjusted_position, scaled_width, scaled_width, scaled_length, self.color);
             },
@@ -126,38 +130,20 @@ pub const Axis = struct {
     }
 };
 
-
 const Gizmo = struct {
     position: Vector3,
-    selected_plane: ?Plane = undefined,
+    selected_plane: i32 = -1,
     axis: [3]Axis = undefined,
+    dragging: bool = false,
 
     pub fn init() Gizmo {
         return Gizmo{
             .position = Vector3 { .x = 0, .y = 0, .z = 0 },
             .selected_plane = undefined,
             .axis = [_]Axis{
-                Axis{
-                    .position = Vector3{ .x = 0, .y = 0, .z = 0 },
-                    .length = 2.0,
-                    .width = 0.1,
-                    .color = Color.red,
-                    .axis_type = AxisType.X,
-                },
-                Axis{
-                    .position = Vector3{ .x = 0, .y = 0, .z = 0 },
-                    .length = 2.0,
-                    .width = 0.1,
-                    .color = Color.green,
-                    .axis_type = AxisType.Y,
-                },
-                Axis{
-                    .position = Vector3{ .x = 0, .y = 0, .z = 0 },
-                    .length = 2.0,
-                    .width = 0.1,
-                    .color = Color.blue,
-                    .axis_type = AxisType.Z,
-                },
+                Axis.init(Color.red, AxisType.X),
+                Axis.init(Color.green, AxisType.Y),
+                Axis.init(Color.blue, AxisType.Z),
             },
         };
     }
@@ -172,37 +158,67 @@ const Gizmo = struct {
     }
 
     pub fn selectPlane(self: *Gizmo) void {
-        if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left)) {
+        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
             const ray = state.getRayFromCamera();
             if (self.axis[0].checkRayIntersection(ray)) {
                 std.debug.print("Intersected with X\n", .{});
-            }
-            else if (self.axis[1].checkRayIntersection(ray)) {
+                self.selected_plane = 0;
+            } else if (self.axis[1].checkRayIntersection(ray)) {
                 std.debug.print("Intersected with Y\n", .{});
+                self.selected_plane = 1;
             } else if (self.axis[2].checkRayIntersection(ray)) {
                 std.debug.print("Intersected with Z\n", .{});
+                self.selected_plane = 2;
             }
+
+            self.dragging = self.selected_plane != -1;
         }
-        else {
-            self.selected_plane = undefined;
+
+        if (rl.isMouseButtonReleased(rl.MouseButton.mouse_button_left)) {
+            self.dragging = false;
+            self.selected_plane = -1;
         }
     }
 
-    pub fn updatePosition(self: *Gizmo, mouseDelta: Vector2) void {
-        const speed = 2.0;
-        if (self.selected_plane) |sp| {
-            switch (sp) {
-                .X => self.position.y += mouseDelta.y * state.delta * speed,
-                .Y => self.position.z += mouseDelta.y * state.delta * speed,
-                .Z => self.position.x += mouseDelta.x * state.delta * speed,
-            }
+    pub fn updatePosition(self: *Gizmo, mouse_delta: Vector2) void {
+        if (self.dragging) {
+            const speed = 4.0;
+
+            const axis_x = Vector3{ .x = 1, .y = 0, .z = 0 };
+            const axis_y = Vector3{ .x = 0, .y = 1, .z = 0 };
+            const axis_z = Vector3{ .x = 0, .y = 0, .z = 1 };
+
+            const selected_axis_vector: Vector3 = switch (self.selected_plane) {
+                0 => axis_x,
+                1 => axis_y,
+                2 => axis_z,
+                else => unreachable,
+            };
+
+            // Проекция позиции объекта и конца оси на экран
+            const axis_start_3d = self.position;
+            const axis_end_3d = self.position.add(selected_axis_vector);
+
+            const axis_start_2d = rl.getWorldToScreen(axis_start_3d, state.main_camera);
+            const axis_end_2d = rl.getWorldToScreen(axis_end_3d, state.main_camera);
+
+            // Вектор оси в пространстве экрана
+            const axis_screen_vector = axis_end_2d.subtract(axis_start_2d).normalize();
+
+            // Проецируем движение мыши на вектор оси на экране
+            const mouse_movement_along_axis = mouse_delta.dotProduct(axis_screen_vector);
+
+            const delta_position = selected_axis_vector.scale(mouse_movement_along_axis * speed * state.delta);
+            self.position = self.position.add(delta_position);
+
+            rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f } \n", .{ self.position.x, self.position.y, self.position.z }), 10, 180, 30, Color.green);
         }
     }
 
     pub fn render(self: *Gizmo) void {
-        for(self.axis) |a| {
-            a.render();
-        }
+        Axis.render(self.axis[0]);
+        Axis.render(self.axis[1]);
+        Axis.render(self.axis[2]);
     }
 };
 
@@ -241,7 +257,9 @@ fn switchAppState() void {
 }
 
 fn updateEditor() void {
-    state.main_camera.update(rl.CameraMode.camera_free);
+    if (!state.gizmo.dragging) {
+        state.main_camera.update(rl.CameraMode.camera_free);
+    }
 
     var collision: rl.RayCollision = .{
         .hit = false,
@@ -252,6 +270,9 @@ fn updateEditor() void {
 
     state.gizmo.position = state.cube_position;
     state.gizmo.update();
+    if (true) {
+        state.cube_position = state.gizmo.position;
+    }
 
     var ray: rl.Ray = undefined;
 
@@ -289,8 +310,6 @@ fn updateGame() void {
     state.gamepad = 0;
     //state.main_camera.update(rl.CameraMode.camera_third_person);
 
-    state.mouse_delta = rl.getMouseDelta().normalize();
-
     if (!rl.isGamepadAvailable(state.gamepad)) {
         state.gamepad = -1;
     }
@@ -319,6 +338,8 @@ fn update() !void {
         rl.toggleBorderlessWindowed();
     }
 
+    state.mouse_delta = rl.getMouseDelta().normalize();
+
     if (state.mode == AppMode.Editor) {
         updateEditor();
     } else if (state.mode == AppMode.Game) {
@@ -336,7 +357,7 @@ fn drawCursor() void {
 
 fn render() !void {
     rl.beginMode3D(state.main_camera);
-    rl.drawCube(state.cube_position, state.cube_size.x, state.cube_size.y, state.cube_size.z, rl.Color.gray);
+    rl.drawCubeWires(state.cube_position, state.cube_size.x, state.cube_size.y, state.cube_size.z, rl.Color.gray);
 
     if (state.touch_cube) {
         rl.drawCubeWires(state.cube_position, state.cube_size.x + 0.2, state.cube_size.y + 0.2, state.cube_size.z + 0.2, Color.dark_green);
@@ -346,9 +367,9 @@ fn render() !void {
     rl.drawGrid(100.0, 1.0);
 
     // todo: does not work((
-    gl.rlDisableDepthTest();
+    //gl.rlDisableDepthTest();
     state.gizmo.render();
-    gl.rlEnableDepthTest();
+    //gl.rlEnableDepthTest();
 
     rl.endMode3D();
 
