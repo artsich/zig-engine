@@ -148,6 +148,12 @@ const Gizmo = struct {
         };
     }
 
+    pub fn reset(self: *Gizmo) void {
+        self.position = Vector3.zero();
+        self.dragging = false;
+        self.selected_plane = -1;
+    }
+
     pub fn update(self: *Gizmo) void {
         Axis.update(&self.axis[0], self.position);
         Axis.update(&self.axis[1], self.position);
@@ -160,14 +166,13 @@ const Gizmo = struct {
     pub fn selectPlane(self: *Gizmo) void {
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
             const ray = state.getRayFromCamera();
+            self.selected_plane = -1;
+
             if (self.axis[0].checkRayIntersection(ray)) {
-                std.debug.print("Intersected with X\n", .{});
                 self.selected_plane = 0;
             } else if (self.axis[1].checkRayIntersection(ray)) {
-                std.debug.print("Intersected with Y\n", .{});
                 self.selected_plane = 1;
             } else if (self.axis[2].checkRayIntersection(ray)) {
-                std.debug.print("Intersected with Z\n", .{});
                 self.selected_plane = 2;
             }
 
@@ -210,8 +215,6 @@ const Gizmo = struct {
 
             const delta_position = selected_axis_vector.scale(mouse_movement_along_axis * speed * state.delta);
             self.position = self.position.add(delta_position);
-
-            rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f } \n", .{ self.position.x, self.position.y, self.position.z }), 10, 180, 30, Color.green);
         }
     }
 
@@ -239,6 +242,8 @@ const State = struct {
     gamepad: i32 = -1,
 
     gizmo: Gizmo,
+
+    render_target: rl.RenderTexture2D,
 
     pub fn getRayFromCamera(self: *State) rl.Ray {
         const screenWidth: f32 = @floatFromInt(rl.getScreenWidth());
@@ -268,10 +273,14 @@ fn updateEditor() void {
         .point = Vector3.zero(),
     };
 
-    state.gizmo.position = state.cube_position;
-    state.gizmo.update();
-    if (true) {
+    if (state.touch_cube) {
+        state.gizmo.position = state.cube_position;
+
+        state.gizmo.update();
+
         state.cube_position = state.gizmo.position;
+    } else {
+        state.gizmo.reset();
     }
 
     var ray: rl.Ray = undefined;
@@ -355,23 +364,92 @@ fn drawCursor() void {
     rl.drawRectangle(x, y, 10, 10, Color.green);
 }
 
+fn loadRenderTextureDepthTex(width: i32, height: i32) rl.RenderTexture2D
+{
+    var target: rl.RenderTexture2D = rl.RenderTexture2D.init(width, height);
+    //target.id = gl.rlLoadFramebuffer();
+
+    if (target.id > 0)
+    {
+        gl.rlEnableFramebuffer(target.id);
+
+        target.texture.id = gl.rlLoadTexture(null, width, height,  @intFromEnum(gl.rlPixelFormat.rl_pixelformat_uncompressed_r8g8b8a8), 1);
+        target.texture.width = width;
+        target.texture.height = height;
+        target.texture.format = rl.PixelFormat.pixelformat_uncompressed_r8g8b8a8;
+        target.texture.mipmaps = 1;
+
+        target.depth.id = gl.rlLoadTextureDepth(width, height, false);
+        target.depth.width = width;
+        target.depth.height = height;
+        target.depth.format = rl.PixelFormat.pixelformat_compressed_etc2_rgb;
+        target.depth.mipmaps = 1;
+
+        gl.rlFramebufferAttach(target.id, target.texture.id, @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_color_channel0), @intFromEnum(gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
+        gl.rlFramebufferAttach(target.id, target.depth.id, @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_depth), @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_color_channel0), 0);
+
+        if (gl.rlFramebufferComplete(target.id)) {
+            rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat("FBO: [ID %i] Framebuffer object created successfully", .{ target.id }));
+        }
+        else {
+            unreachable;
+        }
+
+        gl.rlDisableFramebuffer();
+    }
+    else  {
+        rl.traceLog(rl.TraceLogLevel.log_warning, "FBO: Framebuffer object can not be created");
+    }
+
+    return target;
+}
+
+// Unload render texture from GPU memory (VRAM)
+fn unloadRenderTextureDepthTex(target: rl.RenderTexture2D) void {
+    if (target.id > 0) {
+        target.texture.unload();
+        target.depth.unload();
+        target.unload();
+    }
+}
+
 fn render() !void {
-    rl.beginMode3D(state.main_camera);
-    rl.drawCubeWires(state.cube_position, state.cube_size.x, state.cube_size.y, state.cube_size.z, rl.Color.gray);
+
+    state.render_target.begin();
+    {
+        defer state.render_target.end();
+        rl.clearBackground(Color.white);
+
+        rl.beginMode3D(state.main_camera);
+        {
+            defer rl.endMode3D();
+
+            rl.drawCube(state.cube_position, state.cube_size.x, state.cube_size.y, state.cube_size.z, rl.Color.gray);
+            if (state.touch_cube) {
+                rl.drawCubeWires(state.cube_position, state.cube_size.x + 0.2, state.cube_size.y + 0.2, state.cube_size.z + 0.2, Color.dark_green);
+            }
+            rl.drawRay(state.ray, Color.dark_purple);
+            rl.drawGrid(100.0, 1.0);
+        }
+    }
+
+    rl.beginDrawing();
+    defer rl.endDrawing();
+    rl.clearBackground(rl.Color.white);
+
+    rl.drawTextureRec(
+        state.render_target.texture,
+        rl.Rectangle.init(0,  0, 1280, -720),
+        Vector2.init(0.0, 0.0),
+        Color.white);
 
     if (state.touch_cube) {
-        rl.drawCubeWires(state.cube_position, state.cube_size.x + 0.2, state.cube_size.y + 0.2, state.cube_size.z + 0.2, Color.dark_green);
+        rl.beginMode3D(state.main_camera);
+        state.gizmo.render();
+        rl.endMode3D();
+
+        rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f } \n", .{ state.cube_position.x, state.cube_position.y, state.cube_position.z }), 10, 180, 30, Color.green);
     }
-    rl.drawRay(state.ray, Color.dark_purple);
-
-    rl.drawGrid(100.0, 1.0);
-
-    // todo: does not work((
-    //gl.rlDisableDepthTest();
-    state.gizmo.render();
-    //gl.rlEnableDepthTest();
-
-    rl.endMode3D();
 
     rl.drawText(rl.textFormat("Fps: %d, Delta: %.6f", .{ rl.getFPS(), state.delta }), 10, 10, 30, Color.green);
 
@@ -385,13 +463,12 @@ fn render() !void {
     const screenHeight = rl.getScreenHeight();
     rl.drawText(rl.textFormat("%dx%d", .{ screenWidth, screenHeight }), 10, 90, 30, rl.Color.black);
 
-
     drawCursor();
 }
 
 pub fn main() anyerror!void {
-    const screenWidth = 1920;
-    const screenHeight = 1080;
+    const screenWidth = 1280;
+    const screenHeight = 720;
 
     rl.initWindow(screenWidth, screenHeight, "Game 1");
     rl.setWindowState(.{
@@ -420,17 +497,15 @@ pub fn main() anyerror!void {
         .dir = Vector2.init(0.0, 0.0),
         .mouse_delta = Vector2.zero(),
         .gizmo = Gizmo.init(),
+        .render_target = loadRenderTextureDepthTex(screenWidth, screenHeight),
     };
+    defer unloadRenderTextureDepthTex(state.render_target);
 
     rl.setTargetFPS(120);
     rl.disableCursor();
 
     while (!rl.windowShouldClose()) {
         try update();
-
-        rl.beginDrawing();
-        defer rl.endDrawing();
-        rl.clearBackground(rl.Color.white);
         try render();
     }
 }
