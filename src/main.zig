@@ -16,6 +16,10 @@ const AppMode = enum {
     Game,
 };
 
+const Entity = struct {
+    position: Vector3,
+    size: Vector3,
+};
 
 const State = struct {
     now: f32 = 0,
@@ -25,9 +29,11 @@ const State = struct {
     camera_mode: rl.CameraMode,
     mouse_delta: Vector2,
 
-    cube_position: Vector3,
-    cube_size: Vector3,
+    entities: [4]Entity = undefined,
+
+    touch_id: usize = 1000,
     touch_cube: bool = false,
+
     ray: rl.Ray,
 
     dir: Vector2,
@@ -58,29 +64,20 @@ fn updateEditor() void {
         state.main_camera.update(rl.CameraMode.camera_free);
     }
 
-    var collision: rl.RayCollision = .{
-        .hit = false,
-        .distance = 0.0,
-        .normal = Vector3.zero(),
-        .point = Vector3.zero(),
-    };
-
-    if (state.touch_cube) {
-        state.gizmo.position = state.cube_position;
+    if (state.touch_cube and state.touch_id < state.entities.len) {
+        state.gizmo.position = state.entities[state.touch_id].position;
         state.gizmo.update(state.main_camera);
-        state.cube_position = state.gizmo.position;
+        state.entities[state.touch_id].position = state.gizmo.position;
     } else {
         state.gizmo.reset();
     }
 
-    var ray: rl.Ray = undefined;
+    for (state.entities, 0..) |_, i| {
+        const cubePosition = state.entities[i].position;
+        const cubeSize = state.entities[i].size;
 
-    const cubePosition = state.cube_position;
-    const cubeSize = state.cube_size;
-
-    if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
-        if (!collision.hit) {
-            ray = state.getRayFromCamera();
+        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
+            const ray = state.getRayFromCamera();
 
             const boundingBox = rl.BoundingBox{
                 .min = rl.Vector3{
@@ -95,19 +92,22 @@ fn updateEditor() void {
                 },
             };
 
-            collision = rl.getRayCollisionBox(ray, boundingBox);
-        } else {
-            collision.hit = false;
-        }
+            const collision = rl.getRayCollisionBox(ray, boundingBox);
 
-        state.touch_cube = collision.hit;
-        state.ray = ray;
+            if (collision.hit) {
+                state.touch_cube = collision.hit;
+                state.touch_id = i;
+                state.ray = ray;
+
+                break;
+            }
+        }
     }
 }
 
 fn updateGame() void {
     state.gamepad = 0;
-    //state.main_camera.update(rl.CameraMode.camera_third_person);
+    state.main_camera.update(rl.CameraMode.camera_third_person);
 
     if (!rl.isGamepadAvailable(state.gamepad)) {
         state.gamepad = -1;
@@ -120,9 +120,9 @@ fn updateGame() void {
         state.dir = Vector2.init(0.0, 0.0);
     }
 
-    const acceleration: f32 = 10.0;
-    const velocity = Vector2.scale(state.dir, acceleration * state.delta);
-    state.cube_position = Vector3.add(state.cube_position, Vector3.init(velocity.x, 0.0, velocity.y));
+    // const acceleration: f32 = 10.0;
+    // const velocity = Vector2.scale(state.dir, acceleration * state.delta);
+    // state.cube_position = Vector3.add(state.cube_position, Vector3.init(velocity.x, 0.0, velocity.y));
 }
 
 fn update() !void {
@@ -157,7 +157,6 @@ fn drawCursor() void {
 fn loadRenderTextureDepthTex(width: i32, height: i32) rl.RenderTexture2D
 {
     var target: rl.RenderTexture2D = rl.RenderTexture2D.init(width, height);
-    //target.id = gl.rlLoadFramebuffer();
 
     if (target.id > 0)
     {
@@ -214,10 +213,13 @@ fn render() !void {
         {
             defer rl.endMode3D();
 
-            rl.drawCube(state.cube_position, state.cube_size.x, state.cube_size.y, state.cube_size.z, rl.Color.gray);
-            if (state.touch_cube) {
-                rl.drawCubeWires(state.cube_position, state.cube_size.x + 0.2, state.cube_size.y + 0.2, state.cube_size.z + 0.2, Color.dark_green);
+            for (state.entities, 0..) |e, i| {
+                rl.drawCube(e.position, e.size.x, e.size.y, e.size.z, rl.Color.gray);
+                if (state.touch_id == i) {
+                    rl.drawCubeWires(e.position, e.size.x + 0.2, e.size.y + 0.2, e.size.z + 0.2, Color.dark_green);
+                }
             }
+
             rl.drawRay(state.ray, Color.dark_purple);
             rl.drawGrid(100.0, 1.0);
         }
@@ -238,7 +240,8 @@ fn render() !void {
         state.gizmo.render();
         rl.endMode3D();
 
-        rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f } \n", .{ state.cube_position.x, state.cube_position.y, state.cube_position.z }), 10, 180, 30, Color.green);
+        const pos = state.entities[state.touch_id].position;
+        rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f } \n", .{ pos.x, pos.y, pos.z }), 10, 180, 30, Color.green);
     }
 
     rl.drawText(rl.textFormat("Fps: %d, Delta: %.6f", .{ rl.getFPS(), state.delta }), 10, 10, 30, Color.green);
@@ -281,8 +284,12 @@ pub fn main() anyerror!void {
             .fovy = 45.0,
             .projection = rl.CameraProjection.camera_perspective
         },
-        .cube_position = Vector3.init(0.0, 1.0, 0.0),
-        .cube_size = Vector3.init(2.0, 2.0, 2.0),
+        .entities = [4]Entity{
+            Entity{ .position = Vector3{ .x = 0, .y = 0, .z = 0 }, .size = Vector3{ .x = 1, .y = 1, .z = 1 } },
+            Entity{ .position = Vector3{ .x = 2, .y = 1, .z = 2 }, .size = Vector3{ .x = 2, .y = 2, .z = 2 } },
+            Entity{ .position = Vector3{ .x = 5, .y = 2, .z = 5 }, .size = Vector3{ .x = 3, .y = 3, .z = 3 } },
+            Entity{ .position = Vector3{ .x = 9, .y = 3, .z = 9 }, .size = Vector3{ .x = 4, .y = 4, .z = 4 } },
+        },
         .ray = undefined,
         .dir = Vector2.init(0.0, 0.0),
         .mouse_delta = Vector2.zero(),
