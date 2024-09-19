@@ -17,8 +17,10 @@ const AppMode = enum {
 };
 
 const Entity = struct {
+    id: u32,
     position: Vector3,
     size: Vector3,
+    color: Color,
 };
 
 const State = struct {
@@ -31,10 +33,8 @@ const State = struct {
 
     entities: [4]Entity = undefined,
 
-    touch_id: usize = 1000,
+    touch_id: u32 = 0,
     touch_cube: bool = false,
-
-    ray: rl.Ray,
 
     dir: Vector2,
     gamepad: i32 = -1,
@@ -42,6 +42,7 @@ const State = struct {
     gizmo: gizmo.Gizmo,
 
     render_target: rl.RenderTexture2D,
+    picking_texture: rl.RenderTexture2D,
 
     pub fn getRayFromCamera(self: *State) rl.Ray {
         const screenWidth: f32 = @floatFromInt(rl.getScreenWidth());
@@ -72,35 +73,22 @@ fn updateEditor() void {
         state.gizmo.reset();
     }
 
-    for (state.entities, 0..) |_, i| {
-        const cubePosition = state.entities[i].position;
-        const cubeSize = state.entities[i].size;
+    if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
+        const screen_width: f32 = @floatFromInt(rl.getScreenWidth());
+        const screen_height: f32 = @floatFromInt(rl.getScreenHeight());
+        const mouse_pos = Vector2.init(screen_width / 2.0, screen_height / 2.0);
 
-        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
-            const ray = state.getRayFromCamera();
+        const image = rl.loadImageFromTexture(state.picking_texture.texture);
+        defer rl.unloadImage(image);
 
-            const boundingBox = rl.BoundingBox{
-                .min = rl.Vector3{
-                    .x = cubePosition.x - cubeSize.x / 2.0,
-                    .y = cubePosition.y - cubeSize.y / 2.0,
-                    .z = cubePosition.z - cubeSize.z / 2.0,
-                },
-                .max = rl.Vector3{
-                    .x = cubePosition.x + cubeSize.x / 2.0,
-                    .y = cubePosition.y + cubeSize.y / 2.0,
-                    .z = cubePosition.z + cubeSize.z / 2.0,
-                },
-            };
+        const picked_color = rl.getImageColor(image, @intFromFloat(mouse_pos.x), @intFromFloat(mouse_pos.y));
+        const object_id = picked_color.toInt() - 1;
 
-            const collision = rl.getRayCollisionBox(ray, boundingBox);
+        rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat("Id picked: %d \n", .{ object_id }));
 
-            if (collision.hit) {
-                state.touch_cube = collision.hit;
-                state.touch_id = i;
-                state.ray = ray;
-
-                break;
-            }
+        if (object_id >= 0 and object_id < state.entities.len) {
+            state.touch_cube = true;
+            state.touch_id = @intCast(object_id);
         }
     }
 }
@@ -154,12 +142,35 @@ fn drawCursor() void {
     rl.drawRectangle(x, y, 10, 10, Color.green);
 }
 
-fn loadRenderTextureDepthTex(width: i32, height: i32) rl.RenderTexture2D
-{
+fn loadPickingTexture(w: i32, h: i32) rl.RenderTexture2D {
+    var target = rl.RenderTexture2D.init(w, h);
+    if (target.id > 0) {
+        gl.rlEnableFramebuffer(target.id);
+
+        target.texture = rl.loadTextureFromImage(rl.genImageColor(w, h, Color.blank));
+        rl.setTextureFilter(target.texture, rl.TextureFilter.texture_filter_point);
+        rl.setTextureWrap(target.texture, rl.TextureWrap.texture_wrap_clamp);
+
+        gl.rlFramebufferAttach(target.id, target.texture.id, @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_color_channel0), @intFromEnum(gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
+        if (gl.rlFramebufferComplete(target.id)) {
+            rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat("FBO: [ID %i] Framebuffer object created successfully", .{ target.id }));
+        }
+        else {
+            unreachable;
+        }
+        gl.rlDisableFramebuffer();
+    } else  {
+        rl.traceLog(rl.TraceLogLevel.log_warning, "FBO: Framebuffer object can not be created");
+        unreachable;
+    }
+
+    return target;
+}
+
+fn loadRenderTextureDepthTex(width: i32, height: i32) rl.RenderTexture2D {
     var target: rl.RenderTexture2D = rl.RenderTexture2D.init(width, height);
 
-    if (target.id > 0)
-    {
+    if (target.id > 0) {
         gl.rlEnableFramebuffer(target.id);
 
         target.texture.id = gl.rlLoadTexture(null, width, height,  @intFromEnum(gl.rlPixelFormat.rl_pixelformat_uncompressed_r8g8b8a8), 1);
@@ -185,15 +196,13 @@ fn loadRenderTextureDepthTex(width: i32, height: i32) rl.RenderTexture2D
         }
 
         gl.rlDisableFramebuffer();
-    }
-    else  {
+    } else  {
         rl.traceLog(rl.TraceLogLevel.log_warning, "FBO: Framebuffer object can not be created");
     }
 
     return target;
 }
 
-// Unload render texture from GPU memory (VRAM)
 fn unloadRenderTextureDepthTex(target: rl.RenderTexture2D) void {
     if (target.id > 0) {
         target.texture.unload();
@@ -203,7 +212,26 @@ fn unloadRenderTextureDepthTex(target: rl.RenderTexture2D) void {
 }
 
 fn render() !void {
+    // render objects for picking
+    state.picking_texture.begin();
+    {
+        defer state.picking_texture.end();
+        rl.clearBackground(Color.white);
 
+        gl.rlDisableColorBlend();
+        defer gl.rlEnableColorBlend();
+
+        rl.beginMode3D(state.main_camera);
+        {
+            for(state.entities, 0..) |e, i| {
+                const id_color = Color.fromInt(@truncate(i+1));
+                rl.drawCube(e.position, e.size.x, e.size.y, e.size.z, id_color);
+            }
+        }
+        rl.endMode3D();
+    }
+
+    // simple 3d
     state.render_target.begin();
     {
         defer state.render_target.end();
@@ -214,13 +242,12 @@ fn render() !void {
             defer rl.endMode3D();
 
             for (state.entities, 0..) |e, i| {
-                rl.drawCube(e.position, e.size.x, e.size.y, e.size.z, rl.Color.gray);
+                rl.drawCube(e.position, e.size.x, e.size.y, e.size.z, e.color);
                 if (state.touch_id == i) {
                     rl.drawCubeWires(e.position, e.size.x + 0.2, e.size.y + 0.2, e.size.z + 0.2, Color.dark_green);
                 }
             }
 
-            rl.drawRay(state.ray, Color.dark_purple);
             rl.drawGrid(100.0, 1.0);
         }
     }
@@ -285,18 +312,19 @@ pub fn main() anyerror!void {
             .projection = rl.CameraProjection.camera_perspective
         },
         .entities = [4]Entity{
-            Entity{ .position = Vector3{ .x = 0, .y = 0, .z = 0 }, .size = Vector3{ .x = 1, .y = 1, .z = 1 } },
-            Entity{ .position = Vector3{ .x = 2, .y = 1, .z = 2 }, .size = Vector3{ .x = 2, .y = 2, .z = 2 } },
-            Entity{ .position = Vector3{ .x = 5, .y = 2, .z = 5 }, .size = Vector3{ .x = 3, .y = 3, .z = 3 } },
-            Entity{ .position = Vector3{ .x = 9, .y = 3, .z = 9 }, .size = Vector3{ .x = 4, .y = 4, .z = 4 } },
+            Entity{ .id = 0, .position = Vector3{ .x = 0, .y = 0, .z = 0 }, .size = Vector3{ .x = 1, .y = 1, .z = 1 }, .color = Color.dark_brown },
+            Entity{ .id = 1, .position = Vector3{ .x = 2, .y = 1, .z = 2 }, .size = Vector3{ .x = 2, .y = 2, .z = 2 }, .color = Color.dark_purple },
+            Entity{ .id = 2, .position = Vector3{ .x = 5, .y = 2, .z = 5 }, .size = Vector3{ .x = 3, .y = 3, .z = 3 }, .color = Color.sky_blue },
+            Entity{ .id = 3, .position = Vector3{ .x = 9, .y = 3, .z = 9 }, .size = Vector3{ .x = 4, .y = 4, .z = 4 }, .color = Color.magenta },
         },
-        .ray = undefined,
         .dir = Vector2.init(0.0, 0.0),
         .mouse_delta = Vector2.zero(),
         .gizmo = gizmo.Gizmo.init(),
         .render_target = loadRenderTextureDepthTex(screenWidth, screenHeight),
+        .picking_texture = loadPickingTexture(screenWidth, screenHeight),
     };
     defer unloadRenderTextureDepthTex(state.render_target);
+    defer unloadRenderTextureDepthTex(state.picking_texture);
 
     rl.setTargetFPS(120);
     rl.disableCursor();
