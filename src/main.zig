@@ -11,6 +11,15 @@ const Camera2d = rl.Camera2D;
 const Color = rl.Color;
 const KeyboardKey = rl.KeyboardKey;
 
+const allocator = std.heap.page_allocator;
+
+var ObjectsIdCounter: u32 = 0;
+pub fn genId() u32 {
+    const id = ObjectsIdCounter + 1;
+    ObjectsIdCounter += 1;
+    return id;
+}
+
 const AppMode = enum {
     Editor,
     Game,
@@ -23,6 +32,97 @@ const Entity = struct {
     color: Color,
 };
 
+const CubeData = struct {
+    size: Vector3,
+};
+
+const PlaneData = struct {
+    size: Vector2,
+};
+
+const ObjectData = union(enum) {
+    Cube: CubeData,
+    Plane: PlaneData,
+};
+
+const SceneObject = struct {
+    id: u32,
+    position: Vector3,
+    color: Color,
+    data: ObjectData,
+
+    pub fn init(p: Vector3, data: ObjectData, color: Color) @This() {
+        return .{
+            .id = genId(),
+            .position = p,
+            .color = color,
+            .data = data,
+        };
+    }
+
+    fn render(self: SceneObject) void {
+        switch (self.data) {
+            .Cube => {
+                const cube = self.data.Cube;
+                rl.drawCube(self.position, cube.size.x, cube.size.y, cube.size.z, self.color);
+            },
+            .Plane => {
+                const plane = self.data.Plane;
+                rl.drawPlane(self.position, plane.size, self.color);
+            }
+        }
+    }
+
+    fn renderColored(self: SceneObject, color: Color) void {
+        switch (self.data) {
+            .Cube => {
+                const cube = self.data.Cube;
+                rl.drawCube(self.position, cube.size.x, cube.size.y, cube.size.z, color);
+            },
+            .Plane => {
+                const plane = self.data.Plane;
+                rl.drawPlane(self.position, plane.size, color);
+            }
+        }
+    }
+
+    fn renderWired(self: SceneObject) void {
+        switch (self.data) {
+            .Cube => {
+                const cube = self.data.Cube;
+                rl.drawCubeWires(self.position, cube.size.x + 0.2, cube.size.y + 0.2, cube.size.z + 0.2, Color.dark_green);
+            },
+            .Plane => {
+                const plane = self.data.Plane;
+                rl.drawCubeWires(self.position, plane.size.x + 0.2, 0.2, plane.size.y + 0.2, Color.dark_green);
+                rl.drawPlane(self.position, plane.size, self.color);
+            }
+        }
+    }
+};
+
+fn createCube(p: Vector3, size: Vector3, c: Color) SceneObject {
+    return SceneObject.init(
+        p,
+        ObjectData {
+            .Cube = CubeData {
+                .size = size,
+            }
+        },
+        c);
+}
+
+fn createPlane(p: Vector3, size: Vector2, c: Color) SceneObject {
+    return SceneObject.init(
+        p,
+        ObjectData {
+            .Plane = PlaneData {
+                .size = size
+            },
+        },
+        c);
+}
+
 const State = struct {
     now: f32 = 0,
     delta: f32 = 0,
@@ -31,10 +131,9 @@ const State = struct {
     camera_mode: rl.CameraMode,
     mouse_delta: Vector2,
 
-    entities: [4]Entity = undefined,
-
+    objects: std.ArrayList(SceneObject),
     touch_id: u32 = 0,
-    touch_cube: bool = false,
+    touched: bool = false,
 
     dir: Vector2,
     gamepad: i32 = -1,
@@ -53,6 +152,9 @@ const State = struct {
 
 var state: State = undefined;
 
+const window_width = 2560;
+const window_height = (9*window_width)/16;
+
 fn switchAppState() void {
     state.mode = switch (state.mode) {
         AppMode.Editor => AppMode.Game,
@@ -60,15 +162,26 @@ fn switchAppState() void {
     };
 }
 
+fn getSceneObjectById(id: u32) *SceneObject {
+    for (state.objects.items) |*obj| {
+        if (obj.id == id) {
+            return obj;
+        }
+    }
+
+    unreachable;
+}
+
 fn updateEditor() void {
     if (!state.gizmo.dragging) {
         state.main_camera.update(rl.CameraMode.camera_free);
     }
 
-    if (state.touch_cube and state.touch_id < state.entities.len) {
-        state.gizmo.position = state.entities[state.touch_id].position;
+    if (state.touched) {
+        const obj = getSceneObjectById(state.touch_id);
+        state.gizmo.position = obj.*.position;
         state.gizmo.update(state.main_camera);
-        state.entities[state.touch_id].position = state.gizmo.position;
+        obj.*.position = state.gizmo.position;
     } else {
         state.gizmo.reset();
     }
@@ -82,13 +195,16 @@ fn updateEditor() void {
         defer rl.unloadImage(image);
 
         const picked_color = rl.getImageColor(image, @intFromFloat(mouse_pos.x), @intFromFloat(mouse_pos.y));
-        const object_id = picked_color.toInt() - 1;
+        const object_id = picked_color.toInt();
 
         rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat("Id picked: %d \n", .{ object_id }));
 
-        if (object_id >= 0 and object_id < state.entities.len) {
-            state.touch_cube = true;
+        if (object_id > 0) {
+            state.touched = true;
             state.touch_id = @intCast(object_id);
+        } else {
+            state.touched = false;
+            state.touch_id = 0;
         }
     }
 }
@@ -223,9 +339,8 @@ fn render() !void {
 
         rl.beginMode3D(state.main_camera);
         {
-            for(state.entities, 0..) |e, i| {
-                const id_color = Color.fromInt(@truncate(i+1));
-                rl.drawCube(e.position, e.size.x, e.size.y, e.size.z, id_color);
+            for(state.objects.items) |obj| {
+                obj.renderColored(Color.fromInt(@truncate(obj.id)));
             }
         }
         rl.endMode3D();
@@ -241,10 +356,10 @@ fn render() !void {
         {
             defer rl.endMode3D();
 
-            for (state.entities, 0..) |e, i| {
-                rl.drawCube(e.position, e.size.x, e.size.y, e.size.z, e.color);
+            for (state.objects.items, 0..) |obj, i| {
+                obj.render();
                 if (state.touch_id == i) {
-                    rl.drawCubeWires(e.position, e.size.x + 0.2, e.size.y + 0.2, e.size.z + 0.2, Color.dark_green);
+                    obj.renderWired();
                 }
             }
 
@@ -258,17 +373,20 @@ fn render() !void {
 
     rl.drawTextureRec(
         state.render_target.texture,
-        rl.Rectangle.init(0,  0, 1280, -720),
+        rl.Rectangle.init(0,  0, @floatFromInt(rl.getScreenWidth()), @floatFromInt(-rl.getScreenHeight())),
         Vector2.init(0.0, 0.0),
         Color.white);
 
-    if (state.touch_cube) {
+    if (state.touched) {
         rl.beginMode3D(state.main_camera);
         state.gizmo.render();
         rl.endMode3D();
 
-        const pos = state.entities[state.touch_id].position;
-        rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f } \n", .{ pos.x, pos.y, pos.z }), 10, 180, 30, Color.green);
+        const touched_obj = getSceneObjectById(state.touch_id);
+        const pos = touched_obj.position;
+        const id = touched_obj.id;
+        rl.drawText(rl.textFormat("ID: %d", .{ id }), 10, 150, 30, Color.green);
+        rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f }", .{ pos.x, pos.y, pos.z }), 10, 180, 30, Color.green);
     }
 
     rl.drawText(rl.textFormat("Fps: %d, Delta: %.6f", .{ rl.getFPS(), state.delta }), 10, 10, 30, Color.green);
@@ -287,13 +405,11 @@ fn render() !void {
 }
 
 pub fn main() anyerror!void {
-    const screenWidth = 1280;
-    const screenHeight = 720;
 
-    rl.initWindow(screenWidth, screenHeight, "Game 1");
+    rl.initWindow(window_width, window_height, "Game 1");
     rl.setWindowState(.{
         .window_resizable = true,
-        .vsync_hint = true,
+        //.vsync_hint = true,
         //        .msaa_4x_hint = true,
         .window_highdpi = true,
     });
@@ -311,18 +427,21 @@ pub fn main() anyerror!void {
             .fovy = 45.0,
             .projection = rl.CameraProjection.camera_perspective
         },
-        .entities = [4]Entity{
-            Entity{ .id = 0, .position = Vector3{ .x = 0, .y = 0, .z = 0 }, .size = Vector3{ .x = 1, .y = 1, .z = 1 }, .color = Color.dark_brown },
-            Entity{ .id = 1, .position = Vector3{ .x = 2, .y = 1, .z = 2 }, .size = Vector3{ .x = 2, .y = 2, .z = 2 }, .color = Color.dark_purple },
-            Entity{ .id = 2, .position = Vector3{ .x = 5, .y = 2, .z = 5 }, .size = Vector3{ .x = 3, .y = 3, .z = 3 }, .color = Color.sky_blue },
-            Entity{ .id = 3, .position = Vector3{ .x = 9, .y = 3, .z = 9 }, .size = Vector3{ .x = 4, .y = 4, .z = 4 }, .color = Color.magenta },
-        },
         .dir = Vector2.init(0.0, 0.0),
         .mouse_delta = Vector2.zero(),
         .gizmo = gizmo.Gizmo.init(),
-        .render_target = loadRenderTextureDepthTex(screenWidth, screenHeight),
-        .picking_texture = loadPickingTexture(screenWidth, screenHeight),
+        .render_target = loadRenderTextureDepthTex(window_width, window_height),
+        .picking_texture = loadPickingTexture(window_width, window_height),
+        .objects = std.ArrayList(SceneObject).init(allocator),
     };
+
+    try state.objects.append(createPlane(Vector3.zero(), Vector2.init(10.0, 10.0), Color.dark_gray));
+    try state.objects.append(createCube(Vector3.init(2, 1, 2), Vector3.init(2, 2, 2), Color.dark_purple));
+    try state.objects.append(createCube(Vector3.init(5, 2, 5), Vector3.init(3, 3, 3), Color.sky_blue ));
+    try state.objects.append(createCube(Vector3.init(9, 3, 9), Vector3.init(4, 4, 4), Color.magenta));
+    try state.objects.append(createCube(Vector3.zero(), Vector3.one(), Color.pink));
+
+    defer state.objects.deinit();
     defer unloadRenderTextureDepthTex(state.render_target);
     defer unloadRenderTextureDepthTex(state.picking_texture);
 
