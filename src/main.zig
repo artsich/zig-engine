@@ -356,9 +356,9 @@ fn render() !void {
         {
             defer rl.endMode3D();
 
-            for (state.objects.items, 0..) |obj, i| {
+            for (state.objects.items) |obj| {
                 obj.render();
-                if (state.touch_id == i) {
+                if (state.touch_id == obj.id) {
                     obj.renderWired();
                 }
             }
