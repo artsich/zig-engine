@@ -186,7 +186,7 @@ fn updateEditor() void {
         state.gizmo.reset();
     }
 
-    if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
+    if (!state.gizmo.dragging and rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
         const screen_width: f32 = @floatFromInt(rl.getScreenWidth());
         const screen_height: f32 = @floatFromInt(rl.getScreenHeight());
         const mouse_pos = Vector2.init(screen_width / 2.0, screen_height / 2.0);
