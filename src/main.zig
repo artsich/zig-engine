@@ -11,7 +11,8 @@ const Camera2d = rl.Camera2D;
 const Color = rl.Color;
 const KeyboardKey = rl.KeyboardKey;
 
-const allocator = std.heap.page_allocator;
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+const allocator = gpa.allocator();
 
 var ObjectsIdCounter: u32 = 0;
 pub fn genId() u32 {
@@ -25,13 +26,6 @@ const AppMode = enum {
     Game,
 };
 
-const Entity = struct {
-    id: u32,
-    position: Vector3,
-    size: Vector3,
-    color: Color,
-};
-
 const CubeData = struct {
     size: Vector3,
 };
@@ -40,9 +34,38 @@ const PlaneData = struct {
     size: Vector2,
 };
 
+const ModelData = struct {
+    model: *const rl.Model,
+    bbox: rl.BoundingBox,
+//    animations: rl.ModelAnimation,
+};
+
+const ModelsTable = std.AutoHashMap([*:0]const u8, rl.Model);
+var loaded_models =  ModelsTable.init(allocator);
+
+pub fn loadModel(file_name: [*:0]const u8) *const rl.Model {
+    if (!loaded_models.contains(file_name)) {
+        const model = rl.loadModel(file_name);
+        loaded_models.put(file_name, model) catch unreachable;
+    }
+
+    const entry = loaded_models.getEntry(file_name);
+    return entry.?.value_ptr;
+}
+
+pub fn unloadModels() void {
+    var it = loaded_models.iterator();
+    while (it.next()) |entry| {
+        entry.value_ptr.*.unload();
+    }
+
+    loaded_models.deinit();
+}
+
 const ObjectData = union(enum) {
     Cube: CubeData,
     Plane: PlaneData,
+    Model: ModelData,
 };
 
 const SceneObject = struct {
@@ -69,6 +92,10 @@ const SceneObject = struct {
             .Plane => {
                 const plane = self.data.Plane;
                 rl.drawPlane(self.position, plane.size, self.color);
+            },
+            .Model => {
+                const data = self.data.Model;
+                rl.drawModel(data.model.*, self.position, 1.0, self.color);
             }
         }
     }
@@ -82,6 +109,10 @@ const SceneObject = struct {
             .Plane => {
                 const plane = self.data.Plane;
                 rl.drawPlane(self.position, plane.size, color);
+            },
+            .Model => {
+                const data = self.data.Model;
+                rl.drawModel(data.model.*, self.position, 1.0, color);
             }
         }
     }
@@ -95,11 +126,36 @@ const SceneObject = struct {
             .Plane => {
                 const plane = self.data.Plane;
                 rl.drawCubeWires(self.position, plane.size.x + 0.2, 0.2, plane.size.y + 0.2, Color.dark_green);
-                rl.drawPlane(self.position, plane.size, self.color);
+            },
+            .Model => {
+                const data = self.data.Model;
+                // todo: must transorm to world space, after i introduce Translation matrix!
+                const bbox = data.bbox;
+                const transformed_bbox = rl.BoundingBox{
+                    .min = rl.Vector3.add(bbox.min, self.position),
+                    .max = rl.Vector3.add(bbox.max, self.position),
+                };
+                rl.drawBoundingBox(transformed_bbox, Color.dark_green);
             }
         }
     }
 };
+
+fn createModel(file_name: [*:0]const u8) SceneObject {
+    const model = loadModel(file_name);
+    const bbox = rl.getModelBoundingBox(model.*);
+
+    return SceneObject.init(
+        Vector3.zero(),
+        ObjectData {
+            .Model = ModelData {
+                .model = model,
+                .bbox = bbox,
+            }
+        },
+        Color.white
+    );
+}
 
 fn createCube(p: Vector3, size: Vector3, c: Color) SceneObject {
     return SceneObject.init(
@@ -405,7 +461,6 @@ fn render() !void {
 }
 
 pub fn main() anyerror!void {
-
     rl.initWindow(window_width, window_height, "Game 1");
     rl.setWindowState(.{
         .window_resizable = true,
@@ -414,6 +469,8 @@ pub fn main() anyerror!void {
         .window_highdpi = true,
     });
     //rl.toggleFullscreen();
+    rl.setTargetFPS(120);
+    rl.disableCursor();
 
     defer rl.closeWindow();
 
@@ -439,14 +496,15 @@ pub fn main() anyerror!void {
     try state.objects.append(createCube(Vector3.init(2, 1, 2), Vector3.init(2, 2, 2), Color.dark_purple));
     try state.objects.append(createCube(Vector3.init(5, 2, 5), Vector3.init(3, 3, 3), Color.sky_blue ));
     try state.objects.append(createCube(Vector3.init(9, 3, 9), Vector3.init(4, 4, 4), Color.magenta));
-    try state.objects.append(createCube(Vector3.zero(), Vector3.one(), Color.pink));
+    try state.objects.append(createModel("res/Suzanne.gltf"));
 
-    defer state.objects.deinit();
+    defer {
+        _ = gpa.deinit();
+    }
     defer unloadRenderTextureDepthTex(state.render_target);
     defer unloadRenderTextureDepthTex(state.picking_texture);
-
-    rl.setTargetFPS(120);
-    rl.disableCursor();
+    defer state.objects.deinit();
+    defer unloadModels();
 
     while (!rl.windowShouldClose()) {
         try update();
