@@ -1,3 +1,6 @@
+export var AmdPowerXpressRequestHighPerformance: u32 = 0x1;
+export var NvOptimusEnablement: u32 = 0x1;
+
 const std = @import("std");
 const rl = @import("raylib");
 const rgui = @import("raygui");
@@ -38,6 +41,19 @@ const ModelData = struct {
     model: *const rl.Model,
     bbox: rl.BoundingBox,
 //    animations: rl.ModelAnimation,
+
+    pub fn useShader(self: @This(), shader: rl.Shader) void {
+        const materials: usize = @intCast(self.model.materialCount);
+        for(0..materials) |i| {
+            self.model.materials[i].shader = shader;
+        }
+    }
+};
+
+const ObjectData = union(enum) {
+    Cube: CubeData,
+    Plane: PlaneData,
+    Model: ModelData,
 };
 
 const ModelsTable = std.AutoHashMap([*:0]const u8, rl.Model);
@@ -61,12 +77,6 @@ pub fn unloadModels() void {
 
     loaded_models.deinit();
 }
-
-const ObjectData = union(enum) {
-    Cube: CubeData,
-    Plane: PlaneData,
-    Model: ModelData,
-};
 
 const SceneObject = struct {
     id: u32,
@@ -112,6 +122,7 @@ const SceneObject = struct {
             },
             .Model => {
                 const data = self.data.Model;
+                data.useShader(state.coloredShader);
                 rl.drawModel(data.model.*, self.position, 1.0, color);
             }
         }
@@ -141,12 +152,18 @@ const SceneObject = struct {
     }
 };
 
-fn createModel(file_name: [*:0]const u8) SceneObject {
+const textFormat = rl.textFormat;
+
+fn infoLog(text: [*:0]const u8, args: anytype) void {
+    rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat(text, args));
+}
+
+fn createModel(p: Vector3, file_name: [*:0]const u8) SceneObject {
     const model = loadModel(file_name);
     const bbox = rl.getModelBoundingBox(model.*);
 
     return SceneObject.init(
-        Vector3.zero(),
+        p,
         ObjectData {
             .Model = ModelData {
                 .model = model,
@@ -179,6 +196,97 @@ fn createPlane(p: Vector3, size: Vector2, c: Color) SceneObject {
         c);
 }
 
+const GL_READ_FRAMEBUFFER = 0x8CA8;
+const GL_DRAW_FRAMEBUFFER = 0x8CA9;
+const GL_DEPTH_BUFFER_BIT = 0x00000100;
+
+const GBuffer = struct {
+    framebuffer: u32,
+    albedoSpec: u32,
+    normals: u32,
+    positions: u32,
+    depth: u32,
+
+    pub fn init(width: i32, height: i32) @This() {
+        const framebuffer = gl.rlLoadFramebuffer();
+        if (framebuffer == 0)
+        {
+            rl.traceLog(rl.TraceLogLevel.log_error ,"Failed to create gbuffer.");
+            unreachable;
+        }
+
+        gl.rlEnableFramebuffer(framebuffer);
+        defer gl.rlDisableFramebuffer();
+
+        const positionsTex = gl.rlLoadTexture(null, width, height, @intFromEnum(gl.rlPixelFormat.rl_pixelformat_uncompressed_r32g32b32), 1);
+        const normalTex = gl.rlLoadTexture(null, width, height, @intFromEnum(gl.rlPixelFormat.rl_pixelformat_uncompressed_r32g32b32), 1);
+        const albedoSpecTex = gl.rlLoadTexture(null, width, height, @intFromEnum(gl.rlPixelFormat.rl_pixelformat_uncompressed_r8g8b8a8), 1);
+
+        gl.rlActiveDrawBuffers(3);
+
+        gl.rlFramebufferAttach(framebuffer, positionsTex, @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_color_channel0), @intFromEnum(gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
+        gl.rlFramebufferAttach(framebuffer, normalTex, @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_color_channel1), @intFromEnum(gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
+        gl.rlFramebufferAttach(framebuffer, albedoSpecTex, @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_color_channel2), @intFromEnum(gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
+
+        const depthTex = gl.rlLoadTextureDepth(width, height, true);
+        gl.rlFramebufferAttach(framebuffer, depthTex, @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_depth), @intFromEnum(gl.rlFramebufferAttachTextureType.rl_attachment_renderbuffer), 0);
+
+        if (gl.rlFramebufferComplete(framebuffer)) {
+            rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat("FBO: [ID %i] Framebuffer object created successfully", .{ framebuffer }));
+        }
+        else unreachable;
+
+        gl.rlDisableFramebuffer();
+
+        return GBuffer {
+            .framebuffer = framebuffer,
+            .albedoSpec = albedoSpecTex,
+            .normals = normalTex,
+            .positions =positionsTex,
+            .depth = depthTex,
+        };
+    }
+
+    pub fn copyDepthTo(self: @This(), target: u32) void {
+        gl.rlBindFramebuffer(GL_READ_FRAMEBUFFER, self.framebuffer);
+        gl.rlBindFramebuffer(GL_DRAW_FRAMEBUFFER, target);
+        gl.rlBlitFramebuffer(0, 0, window_width, window_height, 0, 0, window_width, window_height, GL_DEPTH_BUFFER_BIT);
+        gl.rlDisableFramebuffer();
+    }
+
+    pub fn begin(self: @This()) void {
+        gl.rlEnableFramebuffer(self.framebuffer);
+    }
+
+    pub fn clear(_: @This()) void {
+        gl.rlClearScreenBuffers();
+    }
+
+    pub fn end(_: @This()) void {
+        gl.rlDisableFramebuffer();
+    }
+};
+
+fn getEnumCount(comptime T: type) usize {
+    return @typeInfo(T).Enum.fields.len;
+}
+
+const GBufferTexture = enum(u32) {
+    Shading = 0,
+    Position = 1,
+    Normals = 2,
+    Albedo = 3,
+
+    pub fn getName(self: GBufferTexture) [*:0]const u8 {
+        return switch (self) {
+            .Position => "Position",
+            .Normals => "Normals",
+            .Albedo => "Albedo",
+            .Shading => "Shading",
+        };
+    }
+};
+
 const State = struct {
     now: f32 = 0,
     delta: f32 = 0,
@@ -198,6 +306,12 @@ const State = struct {
 
     render_target: rl.RenderTexture2D,
     picking_texture: rl.RenderTexture2D,
+
+    gbuffer: GBuffer,
+    gbufferShader: rl.Shader,
+    gbufferTextureType: GBufferTexture = GBufferTexture.Position,
+
+    coloredShader: rl.Shader,
 
     pub fn getRayFromCamera(self: *State) rl.Ray {
         const screenWidth: f32 = @floatFromInt(rl.getScreenWidth());
@@ -263,6 +377,14 @@ fn updateEditor() void {
             state.touch_id = 0;
         }
     }
+
+    if (rl.isKeyDown(rl.KeyboardKey.key_right_control)) {
+        if (rl.isKeyPressed(rl.KeyboardKey.key_b)) {
+            state.gbufferTextureType = @enumFromInt((@intFromEnum(state.gbufferTextureType) + 1) % getEnumCount(GBufferTexture));
+            const name = state.gbufferTextureType.getName();
+            infoLog("Display gbuffer - %s", .{ name });
+        }
+    }
 }
 
 fn updateGame() void {
@@ -311,7 +433,7 @@ fn drawCursor() void {
     const screenHeight = rl.getScreenHeight();
     const x = @divTrunc(screenWidth, 2);
     const y = @divTrunc(screenHeight, 2);
-    rl.drawRectangle(x, y, 10, 10, Color.green);
+    rl.drawRectangle(x, y, 10, 10, Color.dark_green);
 }
 
 fn loadPickingTexture(w: i32, h: i32) rl.RenderTexture2D {
@@ -346,16 +468,7 @@ fn loadRenderTextureDepthTex(width: i32, height: i32) rl.RenderTexture2D {
         gl.rlEnableFramebuffer(target.id);
 
         target.texture.id = gl.rlLoadTexture(null, width, height,  @intFromEnum(gl.rlPixelFormat.rl_pixelformat_uncompressed_r8g8b8a8), 1);
-        target.texture.width = width;
-        target.texture.height = height;
-        target.texture.format = rl.PixelFormat.pixelformat_uncompressed_r8g8b8a8;
-        target.texture.mipmaps = 1;
-
         target.depth.id = gl.rlLoadTextureDepth(width, height, false);
-        target.depth.width = width;
-        target.depth.height = height;
-        target.depth.format = rl.PixelFormat.pixelformat_compressed_etc2_rgb;
-        target.depth.mipmaps = 1;
 
         gl.rlFramebufferAttach(target.id, target.texture.id, @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_color_channel0), @intFromEnum(gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
         gl.rlFramebufferAttach(target.id, target.depth.id, @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_depth), @intFromEnum(gl.rlFramebufferAttachType.rl_attachment_color_channel0), 0);
@@ -383,8 +496,7 @@ fn unloadRenderTextureDepthTex(target: rl.RenderTexture2D) void {
     }
 }
 
-fn render() !void {
-    // render objects for picking
+fn renderPickingTexture() void {
     state.picking_texture.begin();
     {
         defer state.picking_texture.end();
@@ -401,50 +513,95 @@ fn render() !void {
         }
         rl.endMode3D();
     }
+}
 
-    // simple 3d
-    state.render_target.begin();
+fn renderDeferred() void {
+    state.gbuffer.begin();
     {
-        defer state.render_target.end();
-        rl.clearBackground(Color.white);
+        defer state.gbuffer.end();
+        state.gbuffer.clear();
+
+        gl.rlDisableColorBlend();
+        defer gl.rlEnableColorBlend();
+
+        rl.beginShaderMode(state.gbufferShader);
+        defer rl.endShaderMode();
 
         rl.beginMode3D(state.main_camera);
         {
             defer rl.endMode3D();
 
             for (state.objects.items) |obj| {
-                obj.render();
-                if (state.touch_id == obj.id) {
-                    obj.renderWired();
+                switch (obj.data) {
+                    .Model => {
+                        obj.data.Model.useShader(state.gbufferShader);
+                    },
+                    else => {}
                 }
+                obj.render();
             }
-
-            rl.drawGrid(100.0, 1.0);
         }
     }
 
+    state.gbuffer.copyDepthTo(0);
+
+    rl.drawTextureRec(
+        rl.Texture2D {
+            .id = switch(state.gbufferTextureType) {
+                .Albedo => state.gbuffer.albedoSpec,
+                .Normals => state.gbuffer.normals,
+                .Position => state.gbuffer.positions,
+                .Shading => 0, // todo: Temp solution.
+            },
+            .width = window_width,
+            .height = window_height,
+            .mipmaps = 1,
+            .format = rl.PixelFormat.pixelformat_uncompressed_r32g32b32
+        },
+        rl.Rectangle.init(0,  0, @floatFromInt(window_width), @floatFromInt(-window_height)),
+        Vector2.init(0.0, 0.0),
+        Color.white);
+}
+
+fn render() !void {
     rl.beginDrawing();
     defer rl.endDrawing();
     rl.clearBackground(rl.Color.white);
 
-    rl.drawTextureRec(
-        state.render_target.texture,
-        rl.Rectangle.init(0,  0, @floatFromInt(rl.getScreenWidth()), @floatFromInt(-rl.getScreenHeight())),
-        Vector2.init(0.0, 0.0),
-        Color.white);
+    renderPickingTexture();
+    renderDeferred();
+
+    // render visual tools
+    rl.beginMode3D(state.main_camera);
+    rl.drawGrid(100.0, 1.0);
+    rl.endMode3D();
 
     if (state.touched) {
         rl.beginMode3D(state.main_camera);
-        state.gizmo.render();
-        rl.endMode3D();
+        gl.rlDisableDepthTest();
 
         const touched_obj = getSceneObjectById(state.touch_id);
+        touched_obj.renderWired();
+        state.gizmo.render();
         const pos = touched_obj.position;
         const id = touched_obj.id;
         rl.drawText(rl.textFormat("ID: %d", .{ id }), 10, 150, 30, Color.green);
         rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f }", .{ pos.x, pos.y, pos.z }), 10, 180, 30, Color.green);
+
+        rl.endMode3D();
+        gl.rlEnableDepthTest();
     }
 
+    // render glyphs
+    rl.beginMode2D(rl.Camera2D {
+        .offset = Vector2.zero(),
+        .rotation = 0,
+        .target = Vector2.zero(),
+        .zoom = 1,
+    });
+
+    gl.rlDisableDepthTest();
+    // render 2d
     rl.drawText(rl.textFormat("Fps: %d, Delta: %.6f", .{ rl.getFPS(), state.delta }), 10, 10, 30, Color.green);
 
     if (state.gamepad >= 0) {
@@ -458,15 +615,17 @@ fn render() !void {
     rl.drawText(rl.textFormat("%dx%d", .{ screenWidth, screenHeight }), 10, 90, 30, rl.Color.black);
 
     drawCursor();
+    rl.endMode2D();
+    gl.rlEnableDepthTest();
 }
 
 pub fn main() anyerror!void {
     rl.initWindow(window_width, window_height, "Game 1");
     rl.setWindowState(.{
         .window_resizable = true,
-        //.vsync_hint = true,
-        //        .msaa_4x_hint = true,
-        .window_highdpi = true,
+        // .vsync_hint = true,
+        // .msaa_4x_hint = true,
+        // .window_highdpi = true,
     });
     //rl.toggleFullscreen();
     rl.setTargetFPS(120);
@@ -490,13 +649,20 @@ pub fn main() anyerror!void {
         .render_target = loadRenderTextureDepthTex(window_width, window_height),
         .picking_texture = loadPickingTexture(window_width, window_height),
         .objects = std.ArrayList(SceneObject).init(allocator),
+
+        .gbuffer = GBuffer.init(window_width, window_height),
+        .gbufferShader = rl.loadShader("res/shaders/gbuffer.vs.glsl", "res/shaders/gbuffer.fs.glsl"),
+        .coloredShader = rl.loadShader("res/shaders/colored.vs.glsl", "res/shaders/colored.fs.glsl"),
     };
 
     try state.objects.append(createPlane(Vector3.zero(), Vector2.init(10.0, 10.0), Color.dark_gray));
     try state.objects.append(createCube(Vector3.init(2, 1, 2), Vector3.init(2, 2, 2), Color.dark_purple));
     try state.objects.append(createCube(Vector3.init(5, 2, 5), Vector3.init(3, 3, 3), Color.sky_blue ));
     try state.objects.append(createCube(Vector3.init(9, 3, 9), Vector3.init(4, 4, 4), Color.magenta));
-    try state.objects.append(createModel("res/Suzanne.gltf"));
+    try state.objects.append(createModel(Vector3.zero(), "res/models/Suzanne.gltf"));
+    try state.objects.append(createModel(Vector3.init(2.0, 1.0, 0.0),"res/models/backpack/backpack.obj"));
+    try state.objects.append(createModel(Vector3.init(-2.0, 1.0, 0.0),"res/models/cyborg/cyborg.obj"));
+    try state.objects.append(createModel(Vector3.init(0.0, 3.0, 0.0),"res/models/nanosuit/nanosuit.obj"));
 
     defer {
         _ = gpa.deinit();
