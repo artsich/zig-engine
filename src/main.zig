@@ -38,7 +38,7 @@ const PlaneData = struct {
 };
 
 const ModelData = struct {
-    model: *const rl.Model,
+    model: rl.Model,
     bbox: rl.BoundingBox,
 //    animations: rl.ModelAnimation,
 
@@ -51,22 +51,20 @@ const ModelData = struct {
 };
 
 const ObjectData = union(enum) {
-    Cube: CubeData,
-    Plane: PlaneData,
     Model: ModelData,
 };
 
 const ModelsTable = std.AutoHashMap([*:0]const u8, rl.Model);
 var loaded_models =  ModelsTable.init(allocator);
 
-pub fn loadModel(file_name: [*:0]const u8) *const rl.Model {
+pub fn loadModel(file_name: [*:0]const u8) rl.Model {
     if (!loaded_models.contains(file_name)) {
         const model = rl.loadModel(file_name);
         loaded_models.put(file_name, model) catch unreachable;
     }
 
-    const entry = loaded_models.getEntry(file_name);
-    return entry.?.value_ptr;
+    const entry = loaded_models.get(file_name);
+    return entry.?;
 }
 
 pub fn unloadModels() void {
@@ -83,11 +81,13 @@ const SceneObject = struct {
     position: Vector3,
     color: Color,
     data: ObjectData,
+    scale: Vector3,
 
     pub fn init(p: Vector3, data: ObjectData, color: Color) @This() {
         return .{
             .id = genId(),
             .position = p,
+            .scale = Vector3.init(1.0, 1.0, 1.0),
             .color = color,
             .data = data,
         };
@@ -95,57 +95,46 @@ const SceneObject = struct {
 
     fn render(self: SceneObject) void {
         switch (self.data) {
-            .Cube => {
-                const cube = self.data.Cube;
-                rl.drawCube(self.position, cube.size.x, cube.size.y, cube.size.z, self.color);
-            },
-            .Plane => {
-                const plane = self.data.Plane;
-                rl.drawPlane(self.position, plane.size, self.color);
-            },
             .Model => {
                 const data = self.data.Model;
-                rl.drawModel(data.model.*, self.position, 1.0, self.color);
+                rl.drawModelEx(data.model, self.position, Vector3.one(),0.0, self.scale, self.color);
             }
         }
     }
 
     fn renderColored(self: SceneObject, color: Color) void {
         switch (self.data) {
-            .Cube => {
-                const cube = self.data.Cube;
-                rl.drawCube(self.position, cube.size.x, cube.size.y, cube.size.z, color);
-            },
-            .Plane => {
-                const plane = self.data.Plane;
-                rl.drawPlane(self.position, plane.size, color);
-            },
             .Model => {
                 const data = self.data.Model;
-                data.useShader(state.coloredShader);
-                rl.drawModel(data.model.*, self.position, 1.0, color);
+                data.useShader(state.colored_shader);
+                rl.drawModelEx(data.model, self.position, Vector3.one(),0.0, self.scale, color);
             }
         }
     }
 
     fn renderWired(self: SceneObject) void {
         switch (self.data) {
-            .Cube => {
-                const cube = self.data.Cube;
-                rl.drawCubeWires(self.position, cube.size.x + 0.2, cube.size.y + 0.2, cube.size.z + 0.2, Color.dark_green);
-            },
-            .Plane => {
-                const plane = self.data.Plane;
-                rl.drawCubeWires(self.position, plane.size.x + 0.2, 0.2, plane.size.y + 0.2, Color.dark_green);
-            },
             .Model => {
                 const data = self.data.Model;
-                // todo: must transorm to world space, after i introduce Translation matrix!
                 const bbox = data.bbox;
-                const transformed_bbox = rl.BoundingBox{
-                    .min = rl.Vector3.add(bbox.min, self.position),
-                    .max = rl.Vector3.add(bbox.max, self.position),
+
+                const scaled_min = rl.Vector3{
+                    .x = bbox.min.x * self.scale.x,
+                    .y = bbox.min.y * self.scale.y,
+                    .z = bbox.min.z * self.scale.z,
                 };
+
+                const scaled_max = rl.Vector3{
+                    .x = bbox.max.x * self.scale.x,
+                    .y = bbox.max.y * self.scale.y,
+                    .z = bbox.max.z * self.scale.z,
+                };
+
+                const transformed_bbox = rl.BoundingBox{
+                    .min = rl.Vector3.add(scaled_min, self.position),
+                    .max = rl.Vector3.add(scaled_max, self.position),
+                };
+
                 rl.drawBoundingBox(transformed_bbox, Color.dark_green);
             }
         }
@@ -158,9 +147,13 @@ fn infoLog(text: [*:0]const u8, args: anytype) void {
     rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat(text, args));
 }
 
+fn errorLog(text: [*:0]const u8, args: anytype) void {
+    rl.traceLog(rl.TraceLogLevel.log_error, rl.textFormat(text, args));
+}
+
 fn createModel(p: Vector3, file_name: [*:0]const u8) SceneObject {
     const model = loadModel(file_name);
-    const bbox = rl.getModelBoundingBox(model.*);
+    const bbox = rl.getModelBoundingBox(model);
 
     return SceneObject.init(
         p,
@@ -175,25 +168,59 @@ fn createModel(p: Vector3, file_name: [*:0]const u8) SceneObject {
 }
 
 fn createCube(p: Vector3, size: Vector3, c: Color) SceneObject {
-    return SceneObject.init(
+    // todo: not unloaded!
+    const cube_model = rl.loadModel("res/models/bin/cube.glb");
+
+    cube_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)].texture = rl.loadTextureFromImage(
+        rl.genImageColor(1, 1, c));
+
+    const normal_map = rl.loadTextureFromImage(
+        rl.genImageColor(1, 1, Color.fromNormalized(rl.Vector4.init(0.5, 0.5, 1, 1))));
+    rl.setTextureWrap(normal_map, rl.TextureWrap.texture_wrap_repeat);
+    rl.setTextureFilter(normal_map, rl.TextureFilter.texture_filter_point);
+
+    cube_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)].texture = normal_map;
+
+    var obj = SceneObject.init(
         p,
         ObjectData {
-            .Cube = CubeData {
-                .size = size,
+            .Model = ModelData {
+                .model = cube_model,
+                .bbox = rl.getModelBoundingBox(cube_model)
             }
         },
         c);
+
+    obj.scale = size.scale(0.5);
+    return obj;
 }
 
 fn createPlane(p: Vector3, size: Vector2, c: Color) SceneObject {
-    return SceneObject.init(
+    // todo: this model is not unloaded!!!
+    const plane_model = rl.loadModel("res/models/bin/plane.glb");
+
+    plane_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)].texture = rl.loadTextureFromImage(
+        rl.genImageColor(1, 1, c));
+
+    const normal_map = rl.loadTextureFromImage(
+        rl.genImageColor(1, 1, Color.fromNormalized(rl.Vector4.init(0.5, 0.5, 1, 1))));
+    rl.setTextureWrap(normal_map, rl.TextureWrap.texture_wrap_repeat);
+    rl.setTextureFilter(normal_map, rl.TextureFilter.texture_filter_point);
+
+    plane_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)].texture = normal_map;
+
+    var obj = SceneObject.init(
         p,
         ObjectData {
-            .Plane = PlaneData {
-                .size = size
+            .Model = ModelData {
+                .model = plane_model,
+                .bbox = rl.getModelBoundingBox(plane_model)
             },
         },
         c);
+
+    obj.scale = Vector3.init(size.x, 0.0, size.y).scale(0.5);
+    return obj;
 }
 
 const GL_READ_FRAMEBUFFER = 0x8CA8;
@@ -308,10 +335,11 @@ const State = struct {
     picking_texture: rl.RenderTexture2D,
 
     gbuffer: GBuffer,
-    gbufferShader: rl.Shader,
-    gbufferTextureType: GBufferTexture = GBufferTexture.Position,
+    gbuffer_shader: rl.Shader,
+    gbuffer_texture_type: GBufferTexture = GBufferTexture.Position,
 
-    coloredShader: rl.Shader,
+    deferred_shading_shader: rl.Shader,
+    colored_shader: rl.Shader,
 
     pub fn getRayFromCamera(self: *State) rl.Ray {
         const screenWidth: f32 = @floatFromInt(rl.getScreenWidth());
@@ -380,8 +408,8 @@ fn updateEditor() void {
 
     if (rl.isKeyDown(rl.KeyboardKey.key_right_control)) {
         if (rl.isKeyPressed(rl.KeyboardKey.key_b)) {
-            state.gbufferTextureType = @enumFromInt((@intFromEnum(state.gbufferTextureType) + 1) % getEnumCount(GBufferTexture));
-            const name = state.gbufferTextureType.getName();
+            state.gbuffer_texture_type = @enumFromInt((@intFromEnum(state.gbuffer_texture_type) + 1) % getEnumCount(GBufferTexture));
+            const name = state.gbuffer_texture_type.getName();
             infoLog("Display gbuffer - %s", .{ name });
         }
     }
@@ -524,7 +552,7 @@ fn renderDeferred() void {
         gl.rlDisableColorBlend();
         defer gl.rlEnableColorBlend();
 
-        rl.beginShaderMode(state.gbufferShader);
+        rl.beginShaderMode(state.gbuffer_shader);
         defer rl.endShaderMode();
 
         rl.beginMode3D(state.main_camera);
@@ -534,9 +562,8 @@ fn renderDeferred() void {
             for (state.objects.items) |obj| {
                 switch (obj.data) {
                     .Model => {
-                        obj.data.Model.useShader(state.gbufferShader);
+                        obj.data.Model.useShader(state.gbuffer_shader);
                     },
-                    else => {}
                 }
                 obj.render();
             }
@@ -547,7 +574,7 @@ fn renderDeferred() void {
 
     rl.drawTextureRec(
         rl.Texture2D {
-            .id = switch(state.gbufferTextureType) {
+            .id = switch(state.gbuffer_texture_type) {
                 .Albedo => state.gbuffer.albedoSpec,
                 .Normals => state.gbuffer.normals,
                 .Position => state.gbuffer.positions,
@@ -651,18 +678,23 @@ pub fn main() anyerror!void {
         .objects = std.ArrayList(SceneObject).init(allocator),
 
         .gbuffer = GBuffer.init(window_width, window_height),
-        .gbufferShader = rl.loadShader("res/shaders/gbuffer.vs.glsl", "res/shaders/gbuffer.fs.glsl"),
-        .coloredShader = rl.loadShader("res/shaders/colored.vs.glsl", "res/shaders/colored.fs.glsl"),
+        .gbuffer_shader = rl.loadShader("res/shaders/gbuffer.vs.glsl", "res/shaders/gbuffer.fs.glsl"),
+        .colored_shader = rl.loadShader("res/shaders/colored.vs.glsl", "res/shaders/colored.fs.glsl"),
+        .deferred_shading_shader = rl.loadShader("res/shaders/deferred_shading.vs.glsl", "res/shaders/deferred_shading.fs.glsl"),
     };
+
+    state.gbuffer_shader.locs[@intFromEnum(rl.SHADER_LOC_MAP_DIFFUSE)] = rl.getShaderLocation(state.gbuffer_shader, "diffuseTexture");
+    state.gbuffer_shader.locs[@intFromEnum(rl.SHADER_LOC_MAP_SPECULAR)] = rl.getShaderLocation(state.gbuffer_shader, "specularTexture");
+    state.gbuffer_shader.locs[@intFromEnum(rl.ShaderLocationIndex.shader_loc_map_normal)] = rl.getShaderLocation(state.gbuffer_shader, "normalTexture");
 
     try state.objects.append(createPlane(Vector3.zero(), Vector2.init(10.0, 10.0), Color.dark_gray));
     try state.objects.append(createCube(Vector3.init(2, 1, 2), Vector3.init(2, 2, 2), Color.dark_purple));
-    try state.objects.append(createCube(Vector3.init(5, 2, 5), Vector3.init(3, 3, 3), Color.sky_blue ));
     try state.objects.append(createCube(Vector3.init(9, 3, 9), Vector3.init(4, 4, 4), Color.magenta));
+    try state.objects.append(createCube(Vector3.init(5, 2, 5), Vector3.init(3, 3, 3), Color.sky_blue ));
+
     try state.objects.append(createModel(Vector3.zero(), "res/models/Suzanne.gltf"));
-    try state.objects.append(createModel(Vector3.init(2.0, 1.0, 0.0),"res/models/backpack/backpack.obj"));
-    try state.objects.append(createModel(Vector3.init(-2.0, 1.0, 0.0),"res/models/cyborg/cyborg.obj"));
-    try state.objects.append(createModel(Vector3.init(0.0, 3.0, 0.0),"res/models/nanosuit/nanosuit.obj"));
+    try state.objects.append(createModel(Vector3.init(0.0, 3.0, 0.0),"res/models/bin/nanosuit.glb"));
+    try state.objects.append(createModel(Vector3.init(-2.0, 1.0, 0.0),"res/models/bin/cyborg.glb"));
 
     defer {
         _ = gpa.deinit();
@@ -671,6 +703,9 @@ pub fn main() anyerror!void {
     defer unloadRenderTextureDepthTex(state.picking_texture);
     defer state.objects.deinit();
     defer unloadModels();
+    defer rl.unloadShader(state.colored_shader);
+    defer rl.unloadShader(state.gbuffer_shader);
+    defer rl.unloadShader(state.deferred_shading_shader);
 
     while (!rl.windowShouldClose()) {
         try update();
