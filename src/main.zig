@@ -29,12 +29,18 @@ const AppMode = enum {
     Game,
 };
 
-const CubeData = struct {
-    size: Vector3,
+const PointLight = struct {
+    // radius info
 };
 
-const PlaneData = struct {
-    size: Vector2,
+const DirLight = struct {
+    // will be empte, as scene object will have direction component,
+    dir: Vector3,
+};
+
+const Ligth = union(enum) {
+    Point: PointLight,
+    Dir: DirLight,
 };
 
 const ModelData = struct {
@@ -76,14 +82,37 @@ pub fn unloadModels() void {
     loaded_models.deinit();
 }
 
+fn drawModel(model: rl.Model, transform: rl.Matrix, c: Color) void {
+    const model_transform = model.transform.multiply(transform);
+
+    for(0..@intCast(model.meshCount)) |i| {
+
+        const loc: usize = @intCast(@intFromEnum(rl.MATERIAL_MAP_DIFFUSE));
+        const color = model.materials[@intCast(model.meshMaterial[i])].maps[loc].color;
+
+        model.materials[@intCast(model.meshMaterial[i])].maps[loc].color = c;
+        rl.drawMesh(model.meshes[i], model.materials[@intCast(model.meshMaterial[i])], model_transform);
+        model.materials[@intCast(model.meshMaterial[i])].maps[loc].color = color;
+    }
+}
+
+pub fn generateTransformMatrix(position: rl.Vector3, scale: rl.Vector3, rotations: rl.Vector3) rl.Matrix {
+    const translationMatrix = rl.Matrix.translate(position.x, position.y, position.z);
+    const scaleMatrix = rl.Matrix.scale(scale.x, scale.y, scale.z);
+    const rotationMatrix = rl.Matrix.rotateXYZ(rl.Vector3{ .x = rotations.x, .y = rotations.y, .z = rotations.z });
+
+    return scaleMatrix.multiply(rotationMatrix).multiply(translationMatrix);
+}
+
 const SceneObject = struct {
     id: u32,
-    position: Vector3,
+
     color: Color,
     data: ObjectData,
+
+    position: Vector3,
     scale: Vector3,
-    axis: Vector3,
-    rotation: f32,
+    rotations: Vector3,
 
     pub fn init(p: Vector3, data: ObjectData, color: Color) @This() {
         return .{
@@ -92,16 +121,17 @@ const SceneObject = struct {
             .scale = Vector3.init(1.0, 1.0, 1.0),
             .color = color,
             .data = data,
-            .axis = Vector3.zero(),
-            .rotation = 0,
+            .rotations = Vector3.zero(),
         };
     }
 
     fn render(self: SceneObject) void {
         switch (self.data) {
             .Model => {
-                const data = self.data.Model;
-                rl.drawModelEx(data.model, self.position, self.axis, self.rotation, self.scale, self.color);
+                const modelData = self.data.Model;
+                const mat = generateTransformMatrix(self.position, self.scale, self.rotations);
+                drawModel(modelData.model, mat, self.color);
+//                rl.drawModelEx(data.model, self.position, self.axis, self.rotation, self.scale, self.color);
             }
         }
     }
@@ -111,7 +141,9 @@ const SceneObject = struct {
             .Model => {
                 const data = self.data.Model;
                 data.useShader(state.colored_shader);
-                rl.drawModelEx(data.model, self.position, self.axis, self.rotation, self.scale, color);
+
+                const mat = generateTransformMatrix(self.position, self.scale, self.rotations);
+                drawModel(data.model, mat, color);
             }
         }
     }
@@ -160,17 +192,10 @@ fn createModel(p: Vector3, file_name: [*:0]const u8) SceneObject {
     const bbox = rl.getModelBoundingBox(model);
 
     for(0..@intCast(model.materialCount)) |i| {
-        var map = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)];
-        if (map.*.texture.id <= 0) {
-            map.texture = state.default_normal_map;
-        }
-    }
-
-    for(0..@intCast(model.materialCount)) |i| {
-        const map = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)];
-        if (map.*.texture.id > 0) {
-            rl.genTextureMipmaps(&map.*.texture);
-            rl.setTextureFilter(map.*.texture, rl.TextureFilter.texture_filter_bilinear);
+        const map_albedo = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)];
+        if (map_albedo.*.texture.id > 0) {
+            rl.genTextureMipmaps(&map_albedo.*.texture);
+            rl.setTextureFilter(map_albedo.*.texture, rl.TextureFilter.texture_filter_bilinear);
         }
 
         // const map_mettal = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_metalness)];
@@ -183,6 +208,8 @@ fn createModel(p: Vector3, file_name: [*:0]const u8) SceneObject {
         if (map_normal.*.texture.id > 0) {
             rl.genTextureMipmaps(&map_normal.*.texture);
             rl.setTextureFilter(map_normal.*.texture, rl.TextureFilter.texture_filter_bilinear);
+        } else {
+            map_normal.texture = state.default_normal_map;
         }
     }
 
@@ -778,13 +805,11 @@ pub fn main() anyerror!void {
 
     try state.objects.append(createPlane(Vector3.init(0.0, 0.1, 0.0), Vector2.init(10.0, 10.0), Color.dark_gray));
     var wall = createPlane(Vector3.init(0, 5, -5), Vector2.init(10.0, 10.0), Color.dark_gray);
-    wall.axis = Vector3.init(1.0, 0.0, 0.0);
-    wall.rotation = 90.0;
+    wall.rotations = Vector3.init(3.14/2.0, 0.0, 0.0);
     try state.objects.append(wall);
 
     var wall2 = createPlane(Vector3.init(10, 5, -5), Vector2.init(10.0, 10.0), Color.dark_gray);
-    wall2.axis = Vector3.init(1.0, 0.0, 0.0);
-    wall2.rotation = 90.0;
+    wall2.rotations = Vector3.init(3.14/2.0, 1.0, 0.0);
     try state.objects.append(wall2);
 
     try state.objects.append(createCube(Vector3.init(2, 1, 2), Vector3.init(2, 2, 2), Color.dark_purple));
@@ -795,7 +820,7 @@ pub fn main() anyerror!void {
     var nanosuit = createModel(Vector3.init(3.0, -0.5,  3.0),"res/models/bin/nanosuit.glb");
     nanosuit.scale = Vector3.scale(Vector3.one(), 0.25);
     try state.objects.append(nanosuit);
-    try state.objects.append(createModel(Vector3.init(-2.0, 1.0, 0.0),"res/models/bin/cyborg.glb"));
+    try state.objects.append(createModel(Vector3.init(-2.0, 1.0, 0.0),"res/models/bin/cyborg.glb")); // todo: model shit, specular is not loaded
 
     infoLog("MODELS: Models loaded.", .{});
 
