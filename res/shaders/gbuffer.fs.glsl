@@ -6,13 +6,15 @@ layout (location = 2) out vec4 gAlbedoSpec;
 
 in vec3 fragPosition;
 in vec2 fragTexCoord;
-in vec3 fragNormal;
 in vec4 fragColor;
 in mat3 TBN;
+in vec3 fragNormal;
 
 uniform sampler2D diffuseTexture;
 uniform sampler2D specularTexture;
 uniform sampler2D normalTexture;
+
+uniform vec4 colDiffuse;
 
 vec3 NormalFromBumpMap() {
     vec3 bumpValue = texture(normalTexture, fragTexCoord).rgb;
@@ -22,7 +24,8 @@ vec3 NormalFromBumpMap() {
 
 void main() {
     gPosition = fragPosition;
+    //gNormal = normalize(fragNormal);
     gNormal = NormalFromBumpMap();
-    gAlbedoSpec.rgb = texture(diffuseTexture, fragTexCoord).rgb * fragColor.rgb;
+    gAlbedoSpec.rgb = texture(diffuseTexture, fragTexCoord).rgb * fragColor.rgb * colDiffuse.rgb;
     gAlbedoSpec.a = texture(specularTexture, fragTexCoord).r;
 }

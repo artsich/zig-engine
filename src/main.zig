@@ -82,6 +82,8 @@ const SceneObject = struct {
     color: Color,
     data: ObjectData,
     scale: Vector3,
+    axis: Vector3,
+    rotation: f32,
 
     pub fn init(p: Vector3, data: ObjectData, color: Color) @This() {
         return .{
@@ -90,6 +92,8 @@ const SceneObject = struct {
             .scale = Vector3.init(1.0, 1.0, 1.0),
             .color = color,
             .data = data,
+            .axis = Vector3.zero(),
+            .rotation = 0,
         };
     }
 
@@ -97,7 +101,7 @@ const SceneObject = struct {
         switch (self.data) {
             .Model => {
                 const data = self.data.Model;
-                rl.drawModelEx(data.model, self.position, Vector3.one(),0.0, self.scale, self.color);
+                rl.drawModelEx(data.model, self.position, self.axis, self.rotation, self.scale, self.color);
             }
         }
     }
@@ -107,7 +111,7 @@ const SceneObject = struct {
             .Model => {
                 const data = self.data.Model;
                 data.useShader(state.colored_shader);
-                rl.drawModelEx(data.model, self.position, Vector3.one(),0.0, self.scale, color);
+                rl.drawModelEx(data.model, self.position, self.axis, self.rotation, self.scale, color);
             }
         }
     }
@@ -155,6 +159,33 @@ fn createModel(p: Vector3, file_name: [*:0]const u8) SceneObject {
     const model = loadModel(file_name);
     const bbox = rl.getModelBoundingBox(model);
 
+    for(0..@intCast(model.materialCount)) |i| {
+        var map = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)];
+        if (map.*.texture.id <= 0) {
+            map.texture = state.default_normal_map;
+        }
+    }
+
+    for(0..@intCast(model.materialCount)) |i| {
+        const map = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)];
+        if (map.*.texture.id > 0) {
+            rl.genTextureMipmaps(&map.*.texture);
+            rl.setTextureFilter(map.*.texture, rl.TextureFilter.texture_filter_bilinear);
+        }
+
+        // const map_mettal = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_metalness)];
+        // if (map_mettal.*.texture.id > 0) {
+        //     rl.genTextureMipmaps(&map_mettal.*.texture);
+        //     rl.setTextureFilter(map_mettal.*.texture, rl.TextureFilter.texture_filter_bilinear);
+        // }
+
+        const map_normal = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)];
+        if (map_normal.*.texture.id > 0) {
+            rl.genTextureMipmaps(&map_normal.*.texture);
+            rl.setTextureFilter(map_normal.*.texture, rl.TextureFilter.texture_filter_bilinear);
+        }
+    }
+
     return SceneObject.init(
         p,
         ObjectData {
@@ -171,15 +202,12 @@ fn createCube(p: Vector3, size: Vector3, c: Color) SceneObject {
     // todo: not unloaded!
     const cube_model = rl.loadModel("res/models/bin/cube.glb");
 
-    cube_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)].texture = rl.loadTextureFromImage(
-        rl.genImageColor(1, 1, c));
+    cube_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)].texture = state.default_diffuse_map;
+    cube_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)].color = c;
 
-    const normal_map = rl.loadTextureFromImage(
-        rl.genImageColor(1, 1, Color.fromNormalized(rl.Vector4.init(0.5, 0.5, 1, 1))));
-    rl.setTextureWrap(normal_map, rl.TextureWrap.texture_wrap_repeat);
-    rl.setTextureFilter(normal_map, rl.TextureFilter.texture_filter_point);
+    cube_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)].texture = state.default_normal_map;
 
-    cube_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)].texture = normal_map;
+    cube_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_metalness)].texture = state.default_specular_map;
 
     var obj = SceneObject.init(
         p,
@@ -202,12 +230,11 @@ fn createPlane(p: Vector3, size: Vector2, c: Color) SceneObject {
     plane_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)].texture = rl.loadTextureFromImage(
         rl.genImageColor(1, 1, c));
 
-    const normal_map = rl.loadTextureFromImage(
-        rl.genImageColor(1, 1, Color.fromNormalized(rl.Vector4.init(0.5, 0.5, 1, 1))));
-    rl.setTextureWrap(normal_map, rl.TextureWrap.texture_wrap_repeat);
-    rl.setTextureFilter(normal_map, rl.TextureFilter.texture_filter_point);
-
+    var normal_map = rl.loadTexture("res/brick-normal.png");
     plane_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)].texture = normal_map;
+
+    rl.genTextureMipmaps(&normal_map);
+    rl.setTextureFilter(normal_map, rl.TextureFilter.texture_filter_bilinear);
 
     var obj = SceneObject.init(
         p,
@@ -219,7 +246,7 @@ fn createPlane(p: Vector3, size: Vector2, c: Color) SceneObject {
         },
         c);
 
-    obj.scale = Vector3.init(size.x, 0.0, size.y).scale(0.5);
+    obj.scale = Vector3.init(size.x, 0.001, size.y).scale(0.5);
     return obj;
 }
 
@@ -269,7 +296,7 @@ const GBuffer = struct {
             .framebuffer = framebuffer,
             .albedoSpec = albedoSpecTex,
             .normals = normalTex,
-            .positions =positionsTex,
+            .positions = positionsTex,
             .depth = depthTex,
         };
     }
@@ -336,7 +363,11 @@ const State = struct {
 
     gbuffer: GBuffer,
     gbuffer_shader: rl.Shader,
-    gbuffer_texture_type: GBufferTexture = GBufferTexture.Position,
+    gbuffer_texture_type: GBufferTexture = GBufferTexture.Shading,
+
+    default_normal_map: rl.Texture2D,
+    default_diffuse_map: rl.Texture2D,
+    default_specular_map: rl.Texture2D,
 
     deferred_shading_shader: rl.Shader,
     colored_shader: rl.Shader,
@@ -350,7 +381,7 @@ const State = struct {
 
 var state: State = undefined;
 
-const window_width = 2560;
+const window_width = 3500;
 const window_height = (9*window_width)/16;
 
 fn switchAppState() void {
@@ -432,7 +463,9 @@ fn updateGame() void {
 
     // const acceleration: f32 = 10.0;
     // const velocity = Vector2.scale(state.dir, acceleration * state.delta);
-    // state.cube_position = Vector3.add(state.cube_position, Vector3.init(velocity.x, 0.0, velocity.y));
+    //
+    // const pos = state.objects.items[0].position;
+    // state.objects.items[0].position = Vector3.add(pos, Vector3.init(velocity.x, 0.0, velocity.y));
 }
 
 fn update() !void {
@@ -547,6 +580,7 @@ fn renderDeferred() void {
     state.gbuffer.begin();
     {
         defer state.gbuffer.end();
+        gl.rlClearColor(0, 0, 0, 0);
         state.gbuffer.clear();
 
         gl.rlDisableColorBlend();
@@ -570,24 +604,54 @@ fn renderDeferred() void {
         }
     }
 
-    state.gbuffer.copyDepthTo(0);
+    if (state.gbuffer_texture_type == GBufferTexture.Shading) {
+        const cameraPos: [3]f32 = .{ state.main_camera.position.x, state.main_camera.position.y, state.main_camera.position.z };
+        const camPosIndexLoc: usize = @intCast(@intFromEnum(rl.ShaderLocationIndex.shader_loc_vector_view));
+        rl.setShaderValue(state.deferred_shading_shader, state.deferred_shading_shader.locs[camPosIndexLoc], &cameraPos, rl.ShaderUniformDataType.shader_uniform_vec3);
 
-    rl.drawTextureRec(
-        rl.Texture2D {
-            .id = switch(state.gbuffer_texture_type) {
-                .Albedo => state.gbuffer.albedoSpec,
-                .Normals => state.gbuffer.normals,
-                .Position => state.gbuffer.positions,
-                .Shading => 0, // todo: Temp solution.
+        const light = state.objects.items[0].position;
+        const lightPos: [3]f32 = .{ light.x, light.y, light.z };
+        const lightPosLoc = rl.getShaderLocation(state.deferred_shading_shader, "lightPos");
+        rl.setShaderValue(state.deferred_shading_shader, lightPosLoc, &lightPos, rl.ShaderUniformDataType.shader_uniform_vec3);
+
+        gl.rlDisableColorBlend();
+        gl.rlEnableShader(state.deferred_shading_shader.id);
+
+        // zero slot is reserved by raylib!
+        gl.rlActiveTextureSlot(1);
+        gl.rlEnableTexture(state.gbuffer.positions);
+
+        gl.rlActiveTextureSlot(2);
+        gl.rlEnableTexture(state.gbuffer.normals);
+
+        gl.rlActiveTextureSlot(3);
+        gl.rlEnableTexture(state.gbuffer.albedoSpec);
+
+        gl.rlLoadDrawQuad();
+
+        gl.rlDisableShader();
+        gl.rlEnableColorBlend();
+    }
+    else {
+        rl.drawTextureRec(
+            rl.Texture2D {
+                .id = switch(state.gbuffer_texture_type) {
+                    .Albedo => state.gbuffer.albedoSpec,
+                    .Normals => state.gbuffer.normals,
+                    .Position => state.gbuffer.positions,
+                    .Shading => 0, // todo: Temp solution.
+                },
+                .width = window_width,
+                .height = window_height,
+                .mipmaps = 1,
+                .format = rl.PixelFormat.pixelformat_uncompressed_r32g32b32
             },
-            .width = window_width,
-            .height = window_height,
-            .mipmaps = 1,
-            .format = rl.PixelFormat.pixelformat_uncompressed_r32g32b32
-        },
-        rl.Rectangle.init(0,  0, @floatFromInt(window_width), @floatFromInt(-window_height)),
-        Vector2.init(0.0, 0.0),
-        Color.white);
+            rl.Rectangle.init(0,  0, @floatFromInt(window_width), @floatFromInt(-window_height)),
+            Vector2.init(0.0, 0.0),
+            Color.white);
+    }
+
+    state.gbuffer.copyDepthTo(0);
 }
 
 fn render() !void {
@@ -612,11 +676,12 @@ fn render() !void {
         state.gizmo.render();
         const pos = touched_obj.position;
         const id = touched_obj.id;
-        rl.drawText(rl.textFormat("ID: %d", .{ id }), 10, 150, 30, Color.green);
-        rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f }", .{ pos.x, pos.y, pos.z }), 10, 180, 30, Color.green);
 
         rl.endMode3D();
         gl.rlEnableDepthTest();
+
+        rl.drawText(rl.textFormat("ID: %d", .{ id }), 10, 150, 30, Color.green);
+        rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f }", .{ pos.x, pos.y, pos.z }), 10, 180, 30, Color.green);
     }
 
     // render glyphs
@@ -681,20 +746,58 @@ pub fn main() anyerror!void {
         .gbuffer_shader = rl.loadShader("res/shaders/gbuffer.vs.glsl", "res/shaders/gbuffer.fs.glsl"),
         .colored_shader = rl.loadShader("res/shaders/colored.vs.glsl", "res/shaders/colored.fs.glsl"),
         .deferred_shading_shader = rl.loadShader("res/shaders/deferred_shading.vs.glsl", "res/shaders/deferred_shading.fs.glsl"),
+
+        .default_normal_map = rl.loadTextureFromImage(
+            rl.genImageColor(
+                1, 1,
+                Color.fromNormalized(
+                    rl.Vector4.init(0.5, 0.5, 1, 1)))),
+        .default_diffuse_map = rl.loadTextureFromImage(rl.genImageColor(1, 1, Color.white)),
+        .default_specular_map = rl.loadTextureFromImage(rl.genImageColor(1, 1, Color.black)),
     };
 
+    // shader setup
     state.gbuffer_shader.locs[@intFromEnum(rl.SHADER_LOC_MAP_DIFFUSE)] = rl.getShaderLocation(state.gbuffer_shader, "diffuseTexture");
     state.gbuffer_shader.locs[@intFromEnum(rl.SHADER_LOC_MAP_SPECULAR)] = rl.getShaderLocation(state.gbuffer_shader, "specularTexture");
     state.gbuffer_shader.locs[@intFromEnum(rl.ShaderLocationIndex.shader_loc_map_normal)] = rl.getShaderLocation(state.gbuffer_shader, "normalTexture");
 
-    try state.objects.append(createPlane(Vector3.zero(), Vector2.init(10.0, 10.0), Color.dark_gray));
+    state.deferred_shading_shader.locs[@intFromEnum(rl.ShaderLocationIndex.shader_loc_vector_view)] = rl.getShaderLocation(state.deferred_shading_shader, "camPos");
+    gl.rlEnableShader(state.deferred_shading_shader.id);
+        gl.rlSetUniformSampler(
+            rl.getShaderLocation(state.deferred_shading_shader, "gPosition"), 1);
+        gl.rlSetUniformSampler(
+            rl.getShaderLocation(state.deferred_shading_shader, "gNormal"), 2);
+        gl.rlSetUniformSampler(
+            rl.getShaderLocation(state.deferred_shading_shader, "gAlbedoSpec"), 3);
+    gl.rlDisableShader();
+    // -----
+
+    infoLog("SHADER: sheders set up.", .{});
+
+    try state.objects.append(createCube(Vector3.init(0, 2, -1), Vector3.init(1, 1, 1), Color.lime));
+
+    try state.objects.append(createPlane(Vector3.init(0.0, 0.1, 0.0), Vector2.init(10.0, 10.0), Color.dark_gray));
+    var wall = createPlane(Vector3.init(0, 5, -5), Vector2.init(10.0, 10.0), Color.dark_gray);
+    wall.axis = Vector3.init(1.0, 0.0, 0.0);
+    wall.rotation = 90.0;
+    try state.objects.append(wall);
+
+    var wall2 = createPlane(Vector3.init(10, 5, -5), Vector2.init(10.0, 10.0), Color.dark_gray);
+    wall2.axis = Vector3.init(1.0, 0.0, 0.0);
+    wall2.rotation = 90.0;
+    try state.objects.append(wall2);
+
     try state.objects.append(createCube(Vector3.init(2, 1, 2), Vector3.init(2, 2, 2), Color.dark_purple));
     try state.objects.append(createCube(Vector3.init(9, 3, 9), Vector3.init(4, 4, 4), Color.magenta));
     try state.objects.append(createCube(Vector3.init(5, 2, 5), Vector3.init(3, 3, 3), Color.sky_blue ));
 
-    try state.objects.append(createModel(Vector3.zero(), "res/models/Suzanne.gltf"));
-    try state.objects.append(createModel(Vector3.init(0.0, 3.0, 0.0),"res/models/bin/nanosuit.glb"));
+    try state.objects.append(createModel(Vector3.init(0.0, 2.0, 0.0), "res/models/Suzanne.gltf"));
+    var nanosuit = createModel(Vector3.init(3.0, -0.5,  3.0),"res/models/bin/nanosuit.glb");
+    nanosuit.scale = Vector3.scale(Vector3.one(), 0.25);
+    try state.objects.append(nanosuit);
     try state.objects.append(createModel(Vector3.init(-2.0, 1.0, 0.0),"res/models/bin/cyborg.glb"));
+
+    infoLog("MODELS: Models loaded.", .{});
 
     defer {
         _ = gpa.deinit();
