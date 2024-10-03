@@ -104,6 +104,23 @@ pub fn generateTransformMatrix(position: rl.Vector3, scale: rl.Vector3, rotation
     return scaleMatrix.multiply(rotationMatrix).multiply(translationMatrix);
 }
 
+fn drawOBB(vertices: [8]rl.Vector3, color: rl.Color) void {
+    rl.drawLine3D(vertices[0], vertices[1], color);
+    rl.drawLine3D(vertices[1], vertices[2], color);
+    rl.drawLine3D(vertices[2], vertices[3], color);
+    rl.drawLine3D(vertices[3], vertices[0], color);
+
+    rl.drawLine3D(vertices[4], vertices[5], color);
+    rl.drawLine3D(vertices[5], vertices[6], color);
+    rl.drawLine3D(vertices[6], vertices[7], color);
+    rl.drawLine3D(vertices[7], vertices[4], color);
+
+    rl.drawLine3D(vertices[0], vertices[4], color);
+    rl.drawLine3D(vertices[1], vertices[5], color);
+    rl.drawLine3D(vertices[2], vertices[6], color);
+    rl.drawLine3D(vertices[3], vertices[7], color);
+}
+
 const SceneObject = struct {
     id: u32,
 
@@ -131,7 +148,6 @@ const SceneObject = struct {
                 const modelData = self.data.Model;
                 const mat = generateTransformMatrix(self.position, self.scale, self.rotations);
                 drawModel(modelData.model, mat, self.color);
-//                rl.drawModelEx(data.model, self.position, self.axis, self.rotation, self.scale, self.color);
             }
         }
     }
@@ -148,30 +164,30 @@ const SceneObject = struct {
         }
     }
 
-    fn renderWired(self: SceneObject) void {
+    fn renderBounds(self: SceneObject) void {
         switch (self.data) {
             .Model => {
                 const data = self.data.Model;
                 const bbox = data.bbox;
 
-                const scaled_min = rl.Vector3{
-                    .x = bbox.min.x * self.scale.x,
-                    .y = bbox.min.y * self.scale.y,
-                    .z = bbox.min.z * self.scale.z,
+                const mat = generateTransformMatrix(self.position, self.scale, self.rotations);
+
+                var vertices: [8]rl.Vector3 = [_]rl.Vector3{
+                    bbox.min,
+                    rl.Vector3 { .x = bbox.max.x, .y = bbox.min.y, .z = bbox.min.z },
+                    rl.Vector3 { .x = bbox.max.x, .y = bbox.min.y, .z = bbox.max.z },
+                    rl.Vector3 { .x = bbox.min.x, .y = bbox.min.y, .z = bbox.max.z },
+                    rl.Vector3 { .x = bbox.min.x, .y = bbox.max.y, .z = bbox.min.z },
+                    rl.Vector3 { .x = bbox.max.x, .y = bbox.max.y, .z = bbox.min.z },
+                    bbox.max,
+                    rl.Vector3{ .x = bbox.min.x, .y = bbox.max.y, .z = bbox.max.z },
                 };
 
-                const scaled_max = rl.Vector3{
-                    .x = bbox.max.x * self.scale.x,
-                    .y = bbox.max.y * self.scale.y,
-                    .z = bbox.max.z * self.scale.z,
-                };
+                for (0..vertices.len) |i| {
+                    vertices[i] = rl.Vector3.transform(vertices[i], mat);
+                }
 
-                const transformed_bbox = rl.BoundingBox{
-                    .min = rl.Vector3.add(scaled_min, self.position),
-                    .max = rl.Vector3.add(scaled_max, self.position),
-                };
-
-                rl.drawBoundingBox(transformed_bbox, Color.dark_green);
+                drawOBB(vertices, Color.dark_green);
             }
         }
     }
@@ -699,7 +715,7 @@ fn render() !void {
         gl.rlDisableDepthTest();
 
         const touched_obj = getSceneObjectById(state.touch_id);
-        touched_obj.renderWired();
+        touched_obj.renderBounds();
         state.gizmo.render();
         const pos = touched_obj.position;
         const id = touched_obj.id;
