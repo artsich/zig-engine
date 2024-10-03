@@ -97,11 +97,18 @@ fn drawModel(model: rl.Model, transform: rl.Matrix, c: Color) void {
 }
 
 pub fn generateTransformMatrix(position: rl.Vector3, scale: rl.Vector3, rotations: rl.Vector3) rl.Matrix {
-    const translationMatrix = rl.Matrix.translate(position.x, position.y, position.z);
-    const scaleMatrix = rl.Matrix.scale(scale.x, scale.y, scale.z);
-    const rotationMatrix = rl.Matrix.rotateXYZ(rl.Vector3{ .x = rotations.x, .y = rotations.y, .z = rotations.z });
+    const translation_matrix = rl.Matrix.translate(position.x, position.y, position.z);
 
-    return scaleMatrix.multiply(rotationMatrix).multiply(translationMatrix);
+    const scale_matrix = rl.Matrix.scale(scale.x, scale.y, scale.z);
+
+    const quaternionX = rl.Quaternion.fromAxisAngle(rl.Vector3{ .x = 1, .y = 0, .z = 0 }, rotations.x);
+    const quaternionY = rl.Quaternion.fromAxisAngle(rl.Vector3{ .x = 0, .y = 1, .z = 0 }, rotations.y);
+    const quaternionZ = rl.Quaternion.fromAxisAngle(rl.Vector3{ .x = 0, .y = 0, .z = 1 }, rotations.z);
+
+    const combined_quaternion = rl.math.quaternionMultiply(quaternionX, rl.math.quaternionMultiply(quaternionY, quaternionZ));
+    const rotation_matrix = rl.Quaternion.toMatrix(combined_quaternion);
+
+    return scale_matrix.multiply(rotation_matrix).multiply(translation_matrix);
 }
 
 fn drawOBB(vertices: [8]rl.Vector3, color: rl.Color) void {
@@ -424,7 +431,7 @@ const State = struct {
 
 var state: State = undefined;
 
-const window_width = 3500;
+const window_width = 1920;
 const window_height = (9*window_width)/16;
 
 fn switchAppState() void {
@@ -434,6 +441,7 @@ fn switchAppState() void {
     };
 }
 
+// todo: Optimize search
 fn getSceneObjectById(id: u32) *SceneObject {
     for (state.objects.items) |*obj| {
         if (obj.id == id) {
@@ -445,20 +453,26 @@ fn getSceneObjectById(id: u32) *SceneObject {
 }
 
 fn updateEditor() void {
-    if (!state.gizmo.dragging) {
+    const editor_gizmo = &state.gizmo;
+
+    if (!editor_gizmo.dragging and !editor_gizmo.rotating) {
         state.main_camera.update(rl.CameraMode.camera_free);
     }
 
     if (state.touched) {
+        editor_gizmo.update(state.main_camera);
         const obj = getSceneObjectById(state.touch_id);
-        state.gizmo.position = obj.*.position;
-        state.gizmo.update(state.main_camera);
-        obj.*.position = state.gizmo.position;
-    } else {
-        state.gizmo.reset();
+        obj.*.position = editor_gizmo.position;
+        obj.*.rotations = editor_gizmo.rotations;
     }
 
-    if (!state.gizmo.dragging and rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
+    // todo: Gizmo redesign ideas
+    // 1) undo\redo available. (so, command pattern)
+    // 2) i think need to capture scene object inside gizmo when touch object.
+    //      when user touch object it should be attached to the gizmo and deattached when untouch.
+    //      No it is better to call only one method Update(sceneObject) each frame.
+    //      Will be more stateless.
+    if (!editor_gizmo.dragging and rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
         const screen_width: f32 = @floatFromInt(rl.getScreenWidth());
         const screen_height: f32 = @floatFromInt(rl.getScreenHeight());
         const mouse_pos = Vector2.init(screen_width / 2.0, screen_height / 2.0);
@@ -474,6 +488,10 @@ fn updateEditor() void {
         if (object_id > 0) {
             state.touched = true;
             state.touch_id = @intCast(object_id);
+
+            const obj = getSceneObjectById(state.touch_id);
+            editor_gizmo.position = obj.*.position;
+            editor_gizmo.rotations = obj.*.rotations;
         } else {
             state.touched = false;
             state.touch_id = 0;
@@ -718,6 +736,7 @@ fn render() !void {
         touched_obj.renderBounds();
         state.gizmo.render();
         const pos = touched_obj.position;
+        const rot = touched_obj.rotations;
         const id = touched_obj.id;
 
         rl.endMode3D();
@@ -725,6 +744,7 @@ fn render() !void {
 
         rl.drawText(rl.textFormat("ID: %d", .{ id }), 10, 150, 30, Color.green);
         rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f }", .{ pos.x, pos.y, pos.z }), 10, 180, 30, Color.green);
+        rl.drawText(rl.textFormat("Angle: { %.3f, %.3f, %.3f }", .{ rot.x, rot.y, rot.z }), 10, 220, 30, Color.green);
     }
 
     // render glyphs
@@ -762,7 +782,7 @@ pub fn main() anyerror!void {
         // .msaa_4x_hint = true,
         // .window_highdpi = true,
     });
-    //rl.toggleFullscreen();
+    rl.toggleFullscreen();
     rl.setTargetFPS(120);
     rl.disableCursor();
 

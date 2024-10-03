@@ -40,9 +40,11 @@ const Axis = struct {
         self.width_scale_factor = base_size * distance_to_camera / 10.0;
     }
 
-    pub fn render(self: Axis) void {
+    pub fn render(self: Axis, selected: bool) void {
         const scaled_length = self.length * self.len_scale_factor;
         const scaled_width = self.width * self.width_scale_factor;
+
+        const color = if (selected) Color.init(176,196,222, 255) else self.color;
 
         switch (self.axis_type) {
             AxisType.X => {
@@ -51,7 +53,7 @@ const Axis = struct {
                     .y = self.position.y,
                     .z = self.position.z,
                 };
-                rl.drawCube(adjusted_position, scaled_length, scaled_width, scaled_width, self.color);
+                rl.drawCube(adjusted_position, scaled_length, scaled_width, scaled_width, color);
             },
             AxisType.Y => {
                 const adjusted_position = Vector3{
@@ -59,7 +61,7 @@ const Axis = struct {
                     .y = self.position.y + (scaled_length / 2.0),
                     .z = self.position.z,
                 };
-                rl.drawCube(adjusted_position, scaled_width, scaled_length, scaled_width, self.color);
+                rl.drawCube(adjusted_position, scaled_width, scaled_length, scaled_width, color);
             },
             AxisType.Z => {
                 const adjusted_position = Vector3{
@@ -67,7 +69,7 @@ const Axis = struct {
                     .y = self.position.y,
                     .z = self.position.z + (scaled_length / 2.0),
                 };
-                rl.drawCube(adjusted_position, scaled_width, scaled_width, scaled_length, self.color);
+                rl.drawCube(adjusted_position, scaled_width, scaled_width, scaled_length, color);
             },
         }
     }
@@ -118,28 +120,48 @@ const Axis = struct {
     }
 };
 
+const SelectedPlane = enum(u8) {
+    X = 0,
+    Y,
+    Z,
+    None,
+
+    fn selected(self: @This()) bool {
+        return self != SelectedPlane.None;
+    }
+
+    fn asVector3(self: @This()) rl.Vector3 {
+        const axis_x = Vector3{ .x = 1, .y = 0, .z = 0 };
+        const axis_y = Vector3{ .x = 0, .y = 1, .z = 0 };
+        const axis_z = Vector3{ .x = 0, .y = 0, .z = 1 };
+
+        return switch (self) {
+            SelectedPlane.X => axis_x,
+            SelectedPlane.Y => axis_y,
+            SelectedPlane.Z => axis_z,
+            else => unreachable, // TODO: Should i return zero() or unreachable??
+        };
+    }
+};
+
 pub const Gizmo = struct {
     position: Vector3,
-    selected_plane: i32 = -1,
+    rotations: Vector3,
+    selected_plane: SelectedPlane = SelectedPlane.None,
     axis: [3]Axis = undefined,
     dragging: bool = false,
+    rotating: bool = false,
 
     pub fn init() Gizmo {
         return Gizmo{
-            .position = Vector3 { .x = 0, .y = 0, .z = 0 },
-            .selected_plane = undefined,
+            .position = Vector3.zero(),
+            .rotations = Vector3.zero(),
             .axis = [_]Axis{
                 Axis.init(Color.red, AxisType.X),
                 Axis.init(Color.green, AxisType.Y),
                 Axis.init(Color.blue, AxisType.Z),
             },
         };
-    }
-
-    pub fn reset(self: *Gizmo) void {
-        self.position = Vector3.zero();
-        self.dragging = false;
-        self.selected_plane = -1;
     }
 
     pub fn update(self: *Gizmo, camera: rl.Camera3D) void {
@@ -152,11 +174,10 @@ pub const Gizmo = struct {
     }
 
     pub fn render(self: *Gizmo) void {
-        Axis.render(self.axis[0]);
-        Axis.render(self.axis[1]);
-        Axis.render(self.axis[2]);
+        Axis.render(self.axis[0], self.selected_plane == SelectedPlane.X);
+        Axis.render(self.axis[1], self.selected_plane == SelectedPlane.Y);
+        Axis.render(self.axis[2], self.selected_plane == SelectedPlane.Z);
     }
-
 
     fn getRayFromCamera(camera: rl.Camera3D) rl.Ray {
         const screenWidth: f32 = @floatFromInt(rl.getScreenWidth());
@@ -167,55 +188,54 @@ pub const Gizmo = struct {
     fn selectPlane(self: *Gizmo, camera: rl.Camera3D) void {
         if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
             const ray = getRayFromCamera(camera);
-            self.selected_plane = -1;
+            self.selected_plane = SelectedPlane.None;
 
-            if (self.axis[0].checkRayIntersection(ray)) {
-                self.selected_plane = 0;
-            } else if (self.axis[1].checkRayIntersection(ray)) {
-                self.selected_plane = 1;
-            } else if (self.axis[2].checkRayIntersection(ray)) {
-                self.selected_plane = 2;
+            inline for (0..3) |i| {
+                if (self.axis[i].checkRayIntersection(ray)) {
+                    self.selected_plane = @enumFromInt(i);
+                    break;
+                }
             }
 
-            self.dragging = self.selected_plane != -1;
+            self.dragging = self.selected_plane.selected();
         }
 
         if (rl.isMouseButtonReleased(rl.MouseButton.mouse_button_left)) {
             self.dragging = false;
-            self.selected_plane = -1;
         }
+
+        self.rotating = self.selected_plane.selected() and rl.isKeyDown(rl.KeyboardKey.key_r);
     }
 
     fn updatePosition(self: *Gizmo, dt: f32, mouse_delta: rl.Vector2, camera: rl.Camera3D) void {
         if (self.dragging) {
             const speed = 4.0;
 
-            const axis_x = Vector3{ .x = 1, .y = 0, .z = 0 };
-            const axis_y = Vector3{ .x = 0, .y = 1, .z = 0 };
-            const axis_z = Vector3{ .x = 0, .y = 0, .z = 1 };
-
-            const selected_axis_vector: Vector3 = switch (self.selected_plane) {
-                0 => axis_x,
-                1 => axis_y,
-                2 => axis_z,
-                else => unreachable,
-            };
-
-            // Проекция позиции объекта и конца оси на экран
+            const selected_axis_vector = self.selected_plane.asVector3();
             const axis_start_3d = self.position;
             const axis_end_3d = self.position.add(selected_axis_vector);
 
             const axis_start_2d = rl.getWorldToScreen(axis_start_3d, camera);
             const axis_end_2d = rl.getWorldToScreen(axis_end_3d, camera);
 
-            // Вектор оси в пространстве экрана
             const axis_screen_vector = axis_end_2d.subtract(axis_start_2d).normalize();
 
-            // Проецируем движение мыши на вектор оси на экране
             const mouse_movement_along_axis = mouse_delta.dotProduct(axis_screen_vector);
 
             const delta_position = selected_axis_vector.scale(mouse_movement_along_axis * speed * dt);
             self.position = self.position.add(delta_position);
+        }
+
+        if (self.rotating) {
+            if (rl.isKeyPressed(rl.KeyboardKey.key_c)) {
+                self.rotations = Vector3.zero();
+            }
+
+            const wheel_dir = -rl.getMouseWheelMove();
+            const wheel_speed = 10.0;
+
+            self.rotations = self.rotations.add(
+                self.selected_plane.asVector3().scale(wheel_speed * wheel_dir * dt));
         }
     }
 };
