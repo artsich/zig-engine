@@ -1,4 +1,4 @@
-﻿pub const IdGenerator = struct {
+﻿pub const Generator = struct {
     current: u32,
 
     pub fn init() @This() {
