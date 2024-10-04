@@ -6,6 +6,8 @@ const rl = @import("raylib");
 const rgui = @import("raygui");
 const gl = rl.gl;
 const gizmo = @import("gizmo.zig");
+const ids = @import("ids.zig");
+const resources = @import("resources.zig");
 
 const Vector3 = rl.Vector3;
 const Vector2 = rl.Vector2;
@@ -17,12 +19,8 @@ const KeyboardKey = rl.KeyboardKey;
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-var ObjectsIdCounter: u32 = 0;
-pub fn genId() u32 {
-    const id = ObjectsIdCounter + 1;
-    ObjectsIdCounter += 1;
-    return id;
-}
+var SceneObjectsIds = ids.IdGenerator.init();
+var models = resources.Models.init(allocator);
 
 const AppMode = enum {
     Editor,
@@ -60,27 +58,6 @@ const ObjectData = union(enum) {
     Model: ModelData,
 };
 
-const ModelsTable = std.AutoHashMap([*:0]const u8, rl.Model);
-var loaded_models =  ModelsTable.init(allocator);
-
-pub fn loadModel(file_name: [*:0]const u8) rl.Model {
-    if (!loaded_models.contains(file_name)) {
-        const model = rl.loadModel(file_name);
-        loaded_models.put(file_name, model) catch unreachable;
-    }
-
-    const entry = loaded_models.get(file_name);
-    return entry.?;
-}
-
-pub fn unloadModels() void {
-    var it = loaded_models.iterator();
-    while (it.next()) |entry| {
-        entry.value_ptr.*.unload();
-    }
-
-    loaded_models.deinit();
-}
 
 fn drawModel(model: rl.Model, transform: rl.Matrix, c: Color) void {
     const model_transform = model.transform.multiply(transform);
@@ -140,7 +117,7 @@ const SceneObject = struct {
 
     pub fn init(p: Vector3, data: ObjectData, color: Color) @This() {
         return .{
-            .id = genId(),
+            .id = SceneObjectsIds.next(),
             .position = p,
             .scale = Vector3.init(1.0, 1.0, 1.0),
             .color = color,
@@ -211,7 +188,7 @@ fn errorLog(text: [*:0]const u8, args: anytype) void {
 }
 
 fn createModel(p: Vector3, file_name: [*:0]const u8) SceneObject {
-    const model = loadModel(file_name);
+    const model = models.loadModel(file_name);
     const bbox = rl.getModelBoundingBox(model);
 
     for(0..@intCast(model.materialCount)) |i| {
@@ -538,7 +515,7 @@ fn update() !void {
     }
 
     if (rl.isKeyPressed(KeyboardKey.key_f10)) {
-        rl.toggleBorderlessWindowed();
+        rl.toggleFullscreen();
     }
 
     state.mouse_delta = rl.getMouseDelta().normalize();
@@ -781,7 +758,6 @@ pub fn main() anyerror!void {
         // .msaa_4x_hint = true,
         // .window_highdpi = true,
     });
-    rl.toggleFullscreen();
     rl.setTargetFPS(120);
     rl.disableCursor();
 
@@ -865,7 +841,7 @@ pub fn main() anyerror!void {
     defer unloadRenderTextureDepthTex(state.render_target);
     defer unloadRenderTextureDepthTex(state.picking_texture);
     defer state.objects.deinit();
-    defer unloadModels();
+    defer models.unloadModels();
     defer rl.unloadShader(state.colored_shader);
     defer rl.unloadShader(state.gbuffer_shader);
     defer rl.unloadShader(state.deferred_shading_shader);
