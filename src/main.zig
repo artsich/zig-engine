@@ -740,7 +740,6 @@ fn render() !void {
         const id = touched_obj.id;
 
         rl.endMode3D();
-        gl.rlEnableDepthTest();
 
         rl.drawText(rl.textFormat("ID: %d", .{ id }), 10, 150, 30, Color.green);
         rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f }", .{ pos.x, pos.y, pos.z }), 10, 180, 30, Color.green);
@@ -767,7 +766,7 @@ fn render() !void {
 
     const screenWidth = rl.getScreenWidth();
     const screenHeight = rl.getScreenHeight();
-    rl.drawText(rl.textFormat("%dx%d", .{ screenWidth, screenHeight }), 10, 90, 30, rl.Color.black);
+    rl.drawText(rl.textFormat("%dx%d", .{ screenWidth, screenHeight }), 10, 90, 30, rl.Color.green);
 
     drawCursor();
     rl.endMode2D();
