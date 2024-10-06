@@ -1,4 +1,6 @@
+const math = @import("std").math;
 const rl = @import("raylib");
+const SceneObject = @import("scene.zig").SceneObject;
 
 const Vector3 = rl.Vector3;
 const Color = rl.Color;
@@ -120,14 +122,14 @@ const Axis = struct {
     }
 };
 
-const SelectedPlane = enum(u8) {
+const SelectedAxis = enum(u8) {
     X = 0,
     Y,
     Z,
     None,
 
-    fn selected(self: @This()) bool {
-        return self != SelectedPlane.None;
+    pub fn selected(self: @This()) bool {
+        return self != SelectedAxis.None;
     }
 
     fn asVector3(self: @This()) rl.Vector3 {
@@ -136,106 +138,142 @@ const SelectedPlane = enum(u8) {
         const axis_z = Vector3{ .x = 0, .y = 0, .z = 1 };
 
         return switch (self) {
-            SelectedPlane.X => axis_x,
-            SelectedPlane.Y => axis_y,
-            SelectedPlane.Z => axis_z,
-            else => unreachable, // TODO: Should i return zero() or unreachable??
+            SelectedAxis.X => axis_x,
+            SelectedAxis.Y => axis_y,
+            SelectedAxis.Z => axis_z,
+            else => Vector3.zero(),
+        };
+    }
+};
+
+pub const Mode = enum(u8) {
+    Translation,
+    Rotation,
+    
+    pub fn toString(self: @This()) [*:0] const u8 {
+        return switch (self) {
+            .Translation => "Translation",
+            .Rotation => "Rotation",
         };
     }
 };
 
 pub const Gizmo = struct {
-    position: Vector3,
-    rotations: Vector3,
-    selected_plane: SelectedPlane = SelectedPlane.None,
+    selected_axis: SelectedAxis = SelectedAxis.None,
     axis: [3]Axis = undefined,
-    dragging: bool = false,
-    rotating: bool = false,
+    obj: *SceneObject,
+    mode: Mode,
+    
+    initial_position: Vector3,
+    initial_rotations: Vector3,
 
-    pub fn init() Gizmo {
-        return Gizmo{
-            .position = Vector3.zero(),
-            .rotations = Vector3.zero(),
-            .axis = [_]Axis{
+    pub fn init(scene_object: *SceneObject) Gizmo {
+        return .{
+            .mode = Mode.Translation,
+            .obj = scene_object,
+            .initial_position = scene_object.position,
+            .initial_rotations = scene_object.rotations,
+            .axis = [_]Axis {
                 Axis.init(Color.red, AxisType.X),
                 Axis.init(Color.green, AxisType.Y),
                 Axis.init(Color.blue, AxisType.Z),
             },
         };
     }
-
-    pub fn update(self: *Gizmo, camera: rl.Camera3D) void {
-        Axis.update(&self.axis[0], self.position, camera.position);
-        Axis.update(&self.axis[1], self.position, camera.position);
-        Axis.update(&self.axis[2], self.position, camera.position);
-
-        self.selectPlane(camera);
-        self.updatePosition(rl.getFrameTime(),rl.getMouseDelta().normalize(), camera);
+    
+    pub fn changeMode(self: *@This(), mode: Mode) void {
+        self.mode = mode;
     }
 
     pub fn render(self: *Gizmo) void {
-        Axis.render(self.axis[0], self.selected_plane == SelectedPlane.X);
-        Axis.render(self.axis[1], self.selected_plane == SelectedPlane.Y);
-        Axis.render(self.axis[2], self.selected_plane == SelectedPlane.Z);
+        if (self.selected_axis == SelectedAxis.None) {
+            inline for (self.axis) |axis| {
+                Axis.render(axis, false);
+            }
+        } else {
+            const index: usize = @intFromEnum(self.selected_axis);
+            Axis.render(self.axis[index], true);
+        }
+    }
+
+    pub fn update(self: *Gizmo, camera: rl.Camera3D) void {
+        inline for (0..3) |i| {
+            self.axis[i].update(self.obj.position, camera.position);
+        }
+    }
+    
+    pub fn transform(self: *@This(), camera: rl.Camera3D) void {
+        self.activate(camera);
+
+        if (self.selected_axis.selected()) {
+            switch (self.mode) {
+                .Translation => self.translate(camera),
+                .Rotation => self.rotate(),
+            }
+        }
+    }
+
+    pub fn confirmTransformation(self: *Gizmo) void {
+        self.selected_axis = SelectedAxis.None;
+    }
+
+    pub fn hasTransformed(self: *@This()) bool {
+        return self.obj.position.equals(self.initial_position) == 0 or
+            self.obj.rotations.equals(self.initial_rotations) == 0;
+    }
+
+    fn activate(self: *Gizmo, camera: rl.Camera3D) void {
+        if (self.selected_axis.selected()) {
+            return;
+        }
+
+        const ray = getRayFromCamera(camera);
+
+        inline for (0..3) |i| {
+            if (self.axis[i].checkRayIntersection(ray)) {
+                self.selected_axis = @enumFromInt(i);
+                self.initial_position = self.obj.position;
+                self.initial_rotations = self.obj.rotations;
+                break;
+            }
+        }
+    }
+
+    fn translate(self: *Gizmo, camera: rl.Camera3D) void {
+        const speed = 4.0;
+
+        const selected_axis_vector = self.selected_axis.asVector3();
+
+        const axis_start_3d = self.obj.position;
+        const axis_end_3d = self.obj.position.add(selected_axis_vector);
+
+        const axis_start_2d = rl.getWorldToScreen(axis_start_3d, camera);
+        const axis_end_2d = rl.getWorldToScreen(axis_end_3d, camera);
+
+        const axis_screen_vector = axis_end_2d.subtract(axis_start_2d).normalize();
+        const mouse_delta = rl.getMouseDelta().normalize();
+        const mouse_movement_along_axis = mouse_delta.dotProduct(axis_screen_vector);
+
+        const delta_position = selected_axis_vector.scale(mouse_movement_along_axis * speed * rl.getFrameTime());
+        self.obj.position = self.obj.position.add(delta_position);
+    }
+    
+    fn rotate(self: *Gizmo) void {
+        const mouse_delta = rl.getMouseDelta();
+        if (mouse_delta.x != 0 or mouse_delta.y != 0) {
+            const base_rotation_speed = math.degreesToRadians(10);
+            const rotation_speed = base_rotation_speed * rl.getFrameTime();
+
+            const axis_vector = self.selected_axis.asVector3();
+            const delta_rotation = axis_vector.scale(mouse_delta.x * rotation_speed);
+
+            self.obj.rotations = self.obj.rotations.add(delta_rotation);
+        }
     }
 
     fn getRayFromCamera(camera: rl.Camera3D) rl.Ray {
         const screenWidth: f32 = @floatFromInt(rl.getScreenWidth());
         const screenHeight: f32 = @floatFromInt(rl.getScreenHeight());
         return rl.getScreenToWorldRay(.{ .x = screenWidth / 2.0, .y = screenHeight / 2.0 }, camera);
-    }
-
-    fn selectPlane(self: *Gizmo, camera: rl.Camera3D) void {
-        if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
-            const ray = getRayFromCamera(camera);
-            self.selected_plane = SelectedPlane.None;
-
-            inline for (0..3) |i| {
-                if (self.axis[i].checkRayIntersection(ray)) {
-                    self.selected_plane = @enumFromInt(i);
-                    break;
-                }
-            }
-
-            self.dragging = self.selected_plane.selected();
-        }
-
-        if (rl.isMouseButtonReleased(rl.MouseButton.mouse_button_left)) {
-            self.dragging = false;
-        }
-
-        self.rotating = self.selected_plane.selected() and rl.isKeyDown(rl.KeyboardKey.key_r);
-    }
-
-    fn updatePosition(self: *Gizmo, dt: f32, mouse_delta: rl.Vector2, camera: rl.Camera3D) void {
-        if (self.dragging) {
-            const speed = 4.0;
-
-            const selected_axis_vector = self.selected_plane.asVector3();
-            const axis_start_3d = self.position;
-            const axis_end_3d = self.position.add(selected_axis_vector);
-
-            const axis_start_2d = rl.getWorldToScreen(axis_start_3d, camera);
-            const axis_end_2d = rl.getWorldToScreen(axis_end_3d, camera);
-
-            const axis_screen_vector = axis_end_2d.subtract(axis_start_2d).normalize();
-
-            const mouse_movement_along_axis = mouse_delta.dotProduct(axis_screen_vector);
-
-            const delta_position = selected_axis_vector.scale(mouse_movement_along_axis * speed * dt);
-            self.position = self.position.add(delta_position);
-        }
-
-        if (self.rotating) {
-            if (rl.isKeyPressed(rl.KeyboardKey.key_c)) {
-                self.rotations = Vector3.zero();
-            }
-
-            const wheel_dir = -rl.getMouseWheelMove();
-            const wheel_speed = 10.0;
-
-            self.rotations = self.rotations.add(
-                self.selected_plane.asVector3().scale(wheel_speed * wheel_dir * dt));
-        }
     }
 };

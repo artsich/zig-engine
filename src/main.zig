@@ -129,7 +129,6 @@ const State = struct {
 
     objects: std.ArrayList(scene.SceneObject),
     touch_id: u32 = 0,
-    touched: bool = false,
 
     dir: Vector2,
     gamepad: i32 = -1,
@@ -175,49 +174,194 @@ fn getSceneObjectById(id: u32) *scene.SceneObject {
     unreachable;
 }
 
+pub fn getObjectIdFromPickingTex() i32 {
+    const screen_width: f32 = @floatFromInt(rl.getScreenWidth());
+    const screen_height: f32 = @floatFromInt(rl.getScreenHeight());
+    const mouse_pos = Vector2.init(screen_width / 2.0, screen_height / 2.0);
+
+    const image = rl.loadImageFromTexture(state.picking_texture.texture);
+    defer rl.unloadImage(image);
+    
+    const picked_color = rl.getImageColor(image, @intFromFloat(mouse_pos.x), @intFromFloat(mouse_pos.y));
+    return picked_color.toInt();
+}
+
+const Action = union(enum) {
+    SelectObject: SelectObjectAction,
+    MovedObject: MovedObjectAction,
+
+    pub fn do(self: *const @This()) void {
+        switch (self.*) {
+            .SelectObject => |select_action| select_action.do(),
+            .MovedObject => |moved_action| moved_action.do(),
+        }
+    }
+
+    pub fn undo(self: *const @This()) void {
+        switch (self.*) {
+            .SelectObject => |select_action| select_action.undo(),
+            .MovedObject => |moved_action| moved_action.undo(),
+        }
+    }
+};
+
+const MovedObjectAction = struct {
+    obj_id: u32,
+    new_position: Vector3,
+    new_rotation: Vector3,
+    old_position: Vector3,
+    old_rotation: Vector3,
+
+    pub fn init(obj: *scene.SceneObject, old_p: Vector3, old_r: Vector3) @This() {
+        return .{
+            .obj_id = obj.id,
+            .new_position = obj.position,
+            .new_rotation = obj.rotations,
+            .old_position = old_p,
+            .old_rotation = old_r,
+        };
+    }
+
+    pub fn do(self: *const @This()) void {
+        const object = getSceneObjectById(self.obj_id);
+        object.position = self.new_position;
+        object.rotations = self.new_rotation;
+    }
+
+    pub fn undo(self: *const @This()) void {
+        const object = getSceneObjectById(self.obj_id);
+        object.position = self.old_position;
+        object.rotations = self.old_rotation;
+        
+        log.info("move undo", .{});
+    }
+};
+
+const SelectObjectAction = struct {
+    state: *State,
+    selected_obj_id: u32,
+    last_selected_obj_id: u32,
+
+    pub fn init(id: u32, app_state: *State) @This() {
+        return .{
+            .selected_obj_id = id,
+            .state = app_state,
+            .last_selected_obj_id = app_state.touch_id,
+        };
+    }
+
+    pub fn do(self: *const @This()) void {
+        self.state.touch_id = self.selected_obj_id;
+        if (self.state.touch_id > 0) {
+            state.gizmo = gizmo.Gizmo.init(getSceneObjectById(self.state.touch_id));
+        }
+
+        log.info("Select id: %d", .{ self.state.touch_id });
+    }
+
+    pub fn undo(self: *const @This()) void {
+        self.state.touch_id = self.last_selected_obj_id;
+        if (self.state.touch_id > 0) {
+            state.gizmo = gizmo.Gizmo.init(getSceneObjectById(self.state.touch_id));
+        }
+
+        log.info("Undo: select id: %d", .{ self.state.touch_id });
+    }
+};
+
+var editor_actions = std.ArrayList(Action).init(allocator);
+var completed_editor_actions = std.ArrayList(Action).init(allocator);
+
+fn addAction(command: Action) void {
+    editor_actions.append(command) catch |err| {
+        std.debug.print("Failed to add command: {}\n", .{err});
+        std.debug.assert(false);
+    };
+}
+
+fn tryUndoCommands() void {
+    if (!rl.isKeyDown(rl.KeyboardKey.key_left_control)) {
+        return;
+    }
+
+    if (rl.isKeyPressed(rl.KeyboardKey.key_z)) {
+        if (completed_editor_actions.items.len > 0) {
+            completed_editor_actions.pop().undo();
+        }
+        else {
+            log.info("Nothing to undo...", .{ });
+        }
+    }
+}
+
+pub fn processCommands() void {
+    for(editor_actions.items) |action| {
+        action.do();
+        completed_editor_actions.append(action) catch |err| {
+            std.debug.print("Failed to add command: {}\n", .{err});
+            return;
+        };
+    }
+
+    editor_actions.resize(0) catch {};
+}
+
 fn updateEditor() void {
     const editor_gizmo = &state.gizmo;
-
-    if (!editor_gizmo.dragging and !editor_gizmo.rotating) {
+    
+    if (!rl.isKeyDown(rl.KeyboardKey.key_left_control)) {
         state.main_camera.update(rl.CameraMode.camera_free);
     }
 
-    if (state.touched) {
+    tryUndoCommands();
+    var gizmo_was_active = false;
+    if (state.touch_id > 0) {
+        if (rl.isKeyDown(rl.KeyboardKey.key_left_control)) {
+            if (rl.isKeyPressed(rl.KeyboardKey.key_q)) {
+                editor_gizmo.changeMode(gizmo.Mode.Translation);
+                log.info("translate", .{});
+            } else if (rl.isKeyPressed(rl.KeyboardKey.key_w)) {
+                editor_gizmo.changeMode(gizmo.Mode.Rotation);
+                log.info("rotate", .{});
+            }
+        }
+
         editor_gizmo.update(state.main_camera);
-        const obj = getSceneObjectById(state.touch_id);
-        obj.*.position = editor_gizmo.position;
-        obj.*.rotations = editor_gizmo.rotations;
+
+        if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left)) {
+            editor_gizmo.transform(state.main_camera);
+        }
+
+        gizmo_was_active = editor_gizmo.selected_axis.selected();
+
+        if (rl.isMouseButtonReleased(rl.MouseButton.mouse_button_left)) {
+            if (editor_gizmo.hasTransformed()) {
+                addAction(.{
+                    .MovedObject = MovedObjectAction.init(
+                        editor_gizmo.obj,
+                        editor_gizmo.initial_position,
+                        editor_gizmo.initial_rotations,
+                    )
+                });
+            }
+
+            editor_gizmo.confirmTransformation();
+        }
     }
 
-    // todo: Gizmo redesign ideas
-    // 1) undo\redo
-    // 2) i think need to capture scene object inside gizmo when touch object.
-    //      when user touch object it should be attached to the gizmo and deattached when untouch.
-    //      No it is better to call only one method Update(sceneObject) each frame.
-    //      Will be more stateless.
-    if (!editor_gizmo.dragging and rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
-        const screen_width: f32 = @floatFromInt(rl.getScreenWidth());
-        const screen_height: f32 = @floatFromInt(rl.getScreenHeight());
-        const mouse_pos = Vector2.init(screen_width / 2.0, screen_height / 2.0);
-
-        const image = rl.loadImageFromTexture(state.picking_texture.texture);
-        defer rl.unloadImage(image);
-
-        const picked_color = rl.getImageColor(image, @intFromFloat(mouse_pos.x), @intFromFloat(mouse_pos.y));
-        const object_id = picked_color.toInt();
-
-        rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat("Id picked: %d \n", .{ object_id }));
-
-        if (object_id > 0) {
-            state.touched = true;
-            state.touch_id = @intCast(object_id);
-
-            const obj = getSceneObjectById(state.touch_id);
-            editor_gizmo.position = obj.*.position;
-            editor_gizmo.rotations = obj.*.rotations;
-        } else {
-            state.touched = false;
-            state.touch_id = 0;
+    if (!gizmo_was_active and rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
+        const picked_id = getObjectIdFromPickingTex();
+        if (picked_id > 0) {
+            const object_id: u32 = @intCast(picked_id);
+            if (object_id != state.touch_id) {
+                addAction(.{
+                    .SelectObject = SelectObjectAction.init(object_id, &state)
+                });
+            }
+        } else if (state.touch_id > 0) {
+            addAction(.{
+                .SelectObject = SelectObjectAction.init(0, &state)
+            });
         }
     }
 
@@ -228,6 +372,8 @@ fn updateEditor() void {
             log.info("Display gbuffer - %s", .{ name });
         }
     }
+
+    processCommands();
 }
 
 fn updateGame() void {
@@ -451,7 +597,7 @@ fn render() !void {
     rl.drawGrid(100.0, 1.0);
     rl.endMode3D();
 
-    if (state.touched) {
+    if (state.touch_id > 0) {
         rl.beginMode3D(state.main_camera);
         gl.rlDisableDepthTest();
 
@@ -467,6 +613,7 @@ fn render() !void {
         rl.drawText(rl.textFormat("ID: %d", .{ id }), 10, 150, 30, Color.green);
         rl.drawText(rl.textFormat("Pos: { %.2f, %.2f, %.2f }", .{ pos.x, pos.y, pos.z }), 10, 180, 30, Color.green);
         rl.drawText(rl.textFormat("Angle: { %.3f, %.3f, %.3f }", .{ rot.x, rot.y, rot.z }), 10, 220, 30, Color.green);
+        rl.drawText(rl.textFormat("Mode: %s", .{ state.gizmo.mode.toString() }), 10, 260, 30, Color.green);
     }
 
     // render glyphs
@@ -506,7 +653,7 @@ pub fn main() anyerror!void {
     });
     rl.setTargetFPS(120);
     rl.disableCursor();
-
+    
     defer rl.closeWindow();
 
     state = .{
@@ -521,7 +668,7 @@ pub fn main() anyerror!void {
         },
         .dir = Vector2.init(0.0, 0.0),
         .mouse_delta = Vector2.zero(),
-        .gizmo = gizmo.Gizmo.init(),
+        .gizmo = undefined,
         .render_target = loadRenderTextureDepthTex(window_width, window_height),
         .picking_texture = loadPickingTexture(window_width, window_height),
         .objects = std.ArrayList(scene.SceneObject).init(allocator),
@@ -560,7 +707,7 @@ pub fn main() anyerror!void {
     try state.objects.append(wall);
 
     var wall2 = scene.createPlane(Vector3.init(10, 5, -5), Vector2.init(10.0, 10.0), Color.dark_gray);
-    wall2.rotations = Vector3.init(3.14/2.0, 1.0, 0.0);
+    wall2.rotations = Vector3.init(3.14/2.0, -1.0, 0.0);
     try state.objects.append(wall2);
 
     try state.objects.append(scene.createCube(Vector3.init(2, 1, 2), Vector3.init(2, 2, 2), Color.dark_purple));
@@ -584,6 +731,8 @@ pub fn main() anyerror!void {
     defer models.unloadModels();
     defer rl.unloadShader(state.gbuffer_shader);
     defer rl.unloadShader(state.deferred_shading_shader);
+    defer editor_actions.deinit();
+    defer completed_editor_actions.deinit();
 
     while (!rl.windowShouldClose()) {
         try update();
