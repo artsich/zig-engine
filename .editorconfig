@@ -1,0 +1,6 @@
+root = true
+
+[*.zig]
+charset = utf-8
+[*.glsl]
+charset = utf-8
