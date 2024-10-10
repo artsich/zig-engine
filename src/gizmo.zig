@@ -33,7 +33,7 @@ const Axis = struct {
 
     pub fn update(self: *Axis, origin: Vector3, camera_position: Vector3) void {
         self.position = origin;
-        const distance_to_camera = rl.Vector3.distance(self.position,camera_position);
+        const distance_to_camera = rl.Vector3.distance(self.position, camera_position);
 
         const base_size = 1.2;
         const base_length = 1.0;
@@ -46,7 +46,7 @@ const Axis = struct {
         const scaled_length = self.length * self.len_scale_factor;
         const scaled_width = self.width * self.width_scale_factor;
 
-        const color = if (selected) Color.init(176,196,222, 255) else self.color;
+        const color = if (selected) Color.init(176, 196, 222, 255) else self.color;
 
         switch (self.axis_type) {
             AxisType.X => {
@@ -149,8 +149,8 @@ const SelectedAxis = enum(u8) {
 pub const Mode = enum(u8) {
     Translation,
     Rotation,
-    
-    pub fn toString(self: @This()) [*:0] const u8 {
+
+    pub fn toString(self: @This()) [*:0]const u8 {
         return switch (self) {
             .Translation => "Translation",
             .Rotation => "Rotation",
@@ -163,7 +163,7 @@ pub const Gizmo = struct {
     axis: [3]Axis = undefined,
     obj: *SceneObject,
     mode: Mode,
-    
+
     initial_position: Vector3,
     initial_rotations: Vector3,
 
@@ -173,14 +173,14 @@ pub const Gizmo = struct {
             .obj = scene_object,
             .initial_position = scene_object.position,
             .initial_rotations = scene_object.rotations,
-            .axis = [_]Axis {
+            .axis = [_]Axis{
                 Axis.init(Color.red, AxisType.X),
                 Axis.init(Color.green, AxisType.Y),
                 Axis.init(Color.blue, AxisType.Z),
             },
         };
     }
-    
+
     pub fn changeMode(self: *@This(), mode: Mode) void {
         self.mode = mode;
     }
@@ -201,7 +201,7 @@ pub const Gizmo = struct {
             self.axis[i].update(self.obj.position, camera.position);
         }
     }
-    
+
     pub fn transform(self: *@This(), camera: rl.Camera3D) void {
         self.activate(camera);
 
@@ -240,7 +240,7 @@ pub const Gizmo = struct {
     }
 
     fn translate(self: *Gizmo, camera: rl.Camera3D) void {
-        const speed = 4.0;
+        const speed = 10.0;
 
         const selected_axis_vector = self.selected_axis.asVector3();
 
@@ -257,7 +257,7 @@ pub const Gizmo = struct {
         const delta_position = selected_axis_vector.scale(mouse_movement_along_axis * speed * rl.getFrameTime());
         self.obj.position = self.obj.position.add(delta_position);
     }
-    
+
     fn rotate(self: *Gizmo) void {
         const mouse_delta = rl.getMouseDelta();
         if (mouse_delta.x != 0 or mouse_delta.y != 0) {

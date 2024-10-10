@@ -1,4 +1,4 @@
-﻿const rl = @import("raylib");
+const rl = @import("raylib");
 const math = @import("math.zig");
 const id = @import("id.zig");
 const resources = @import("resources.zig");
@@ -25,8 +25,7 @@ fn drawOBB(vertices: [8]rl.Vector3, color: rl.Color) void {
 fn drawModel(model: rl.Model, transform: rl.Matrix, c: rl.Color) void {
     const model_transform = model.transform.multiply(transform);
 
-    for(0..@intCast(model.meshCount)) |i| {
-
+    for (0..@intCast(model.meshCount)) |i| {
         const loc: usize = @intCast(@intFromEnum(rl.MATERIAL_MAP_DIFFUSE));
         const color = model.materials[@intCast(model.meshMaterial[i])].maps[loc].color;
 
@@ -38,6 +37,7 @@ fn drawModel(model: rl.Model, transform: rl.Matrix, c: rl.Color) void {
 
 pub const ObjectData = union(enum) {
     Model: ModelData,
+    Light: Light,
 };
 
 pub const ModelData = struct {
@@ -46,10 +46,18 @@ pub const ModelData = struct {
 
     pub fn useShader(self: @This(), shader: rl.Shader) void {
         const materials: usize = @intCast(self.model.materialCount);
-        for(0..materials) |i| {
+        for (0..materials) |i| {
             self.model.materials[i].shader = shader;
         }
     }
+};
+
+pub const PointLight = struct {
+    radius: f32,
+};
+
+pub const Light = union(enum) {
+    Point: PointLight,
 };
 
 pub const SceneObject = struct {
@@ -79,21 +87,34 @@ pub const SceneObject = struct {
                 const modelData = self.data.Model;
                 const mat = math.getTransformMatrix(self.position, self.scale, self.rotations);
                 drawModel(modelData.model, mat, self.color);
-            }
+            },
+            .Light => {
+                switch (self.data.Light) {
+                    .Point => {
+                        rl.drawCube(self.position, 1.0, 1.0, 1.0, self.color);
+                    },
+                }
+            },
         }
     }
 
-
     pub fn renderForPicking(self: SceneObject) void {
+        const color = rl.Color.fromInt(self.id);
         switch (self.data) {
             .Model => {
                 const data = self.data.Model;
                 data.useShader(resources.colored_shader);
                 const mat = math.getTransformMatrix(self.position, self.scale, self.rotations);
 
-                const color = rl.Color.fromInt(self.id);
                 drawModel(data.model, mat, color);
-            }
+            },
+            .Light => {
+                switch (self.data.Light) {
+                    .Point => {
+                        rl.drawCube(self.position, 1.0, 1.0, 1.0, color);
+                    },
+                }
+            },
         }
     }
 
@@ -107,11 +128,11 @@ pub const SceneObject = struct {
 
                 var vertices: [8]rl.Vector3 = [_]rl.Vector3{
                     bbox.min,
-                    rl.Vector3 { .x = bbox.max.x, .y = bbox.min.y, .z = bbox.min.z },
-                    rl.Vector3 { .x = bbox.max.x, .y = bbox.min.y, .z = bbox.max.z },
-                    rl.Vector3 { .x = bbox.min.x, .y = bbox.min.y, .z = bbox.max.z },
-                    rl.Vector3 { .x = bbox.min.x, .y = bbox.max.y, .z = bbox.min.z },
-                    rl.Vector3 { .x = bbox.max.x, .y = bbox.max.y, .z = bbox.min.z },
+                    rl.Vector3{ .x = bbox.max.x, .y = bbox.min.y, .z = bbox.min.z },
+                    rl.Vector3{ .x = bbox.max.x, .y = bbox.min.y, .z = bbox.max.z },
+                    rl.Vector3{ .x = bbox.min.x, .y = bbox.min.y, .z = bbox.max.z },
+                    rl.Vector3{ .x = bbox.min.x, .y = bbox.max.y, .z = bbox.min.z },
+                    rl.Vector3{ .x = bbox.max.x, .y = bbox.max.y, .z = bbox.min.z },
                     bbox.max,
                     rl.Vector3{ .x = bbox.min.x, .y = bbox.max.y, .z = bbox.max.z },
                 };
@@ -121,7 +142,13 @@ pub const SceneObject = struct {
                 }
 
                 drawOBB(vertices, rl.Color.dark_green);
-            }
+            },
+            .Light => {
+                const data = self.data.Light.Point;
+                var c = self.color;
+                c.a = @round(0.11 * 255);
+                rl.drawSphereWires(self.position, data.radius, 12, 12, c);
+            },
         }
     }
 };
@@ -130,7 +157,7 @@ pub fn createModel(p: rl.Vector3, file_name: [*:0]const u8, models: *resources.M
     const model = models.*.loadModel(file_name);
     const bbox = rl.getModelBoundingBox(model);
 
-    for(0..@intCast(model.materialCount)) |i| {
+    for (0..@intCast(model.materialCount)) |i| {
         const map_albedo = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)];
         if (map_albedo.*.texture.id > 0) {
             rl.genTextureMipmaps(&map_albedo.*.texture);
@@ -152,16 +179,10 @@ pub fn createModel(p: rl.Vector3, file_name: [*:0]const u8, models: *resources.M
         }
     }
 
-    return SceneObject.init(
-        p,
-        ObjectData {
-            .Model = ModelData {
-                .model = model,
-                .bbox = bbox,
-            }
-        },
-        rl.Color.white
-    );
+    return SceneObject.init(p, ObjectData{ .Model = ModelData{
+        .model = model,
+        .bbox = bbox,
+    } }, rl.Color.white);
 }
 
 pub fn createCube(p: rl.Vector3, size: rl.Vector3, c: rl.Color) SceneObject {
@@ -173,15 +194,7 @@ pub fn createCube(p: rl.Vector3, size: rl.Vector3, c: rl.Color) SceneObject {
     cube_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)].texture = resources.default_normal_map;
     cube_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_metalness)].texture = resources.default_specular_map;
 
-    var obj = SceneObject.init(
-        p,
-        ObjectData {
-            .Model = ModelData {
-                .model = cube_model,
-                .bbox = rl.getModelBoundingBox(cube_model)
-            }
-        },
-        c);
+    var obj = SceneObject.init(p, ObjectData{ .Model = ModelData{ .model = cube_model, .bbox = rl.getModelBoundingBox(cube_model) } }, c);
 
     obj.scale = size.scale(0.5);
     return obj;
@@ -191,8 +204,7 @@ pub fn createPlane(p: rl.Vector3, size: rl.Vector2, c: rl.Color) SceneObject {
     // todo: this model is not unloaded!!!
     const plane_model = rl.loadModel("res/models/bin/plane.glb");
 
-    plane_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)].texture = rl.loadTextureFromImage(
-        rl.genImageColor(1, 1, c));
+    plane_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)].texture = rl.loadTextureFromImage(rl.genImageColor(1, 1, c));
 
     var normal_map = rl.loadTexture("res/brick-normal.png");
     plane_model.materials[0].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)].texture = normal_map;
@@ -200,15 +212,9 @@ pub fn createPlane(p: rl.Vector3, size: rl.Vector2, c: rl.Color) SceneObject {
     rl.genTextureMipmaps(&normal_map);
     rl.setTextureFilter(normal_map, rl.TextureFilter.texture_filter_bilinear);
 
-    var obj = SceneObject.init(
-        p,
-        ObjectData {
-            .Model = ModelData {
-                .model = plane_model,
-                .bbox = rl.getModelBoundingBox(plane_model)
-            },
-        },
-        c);
+    var obj = SceneObject.init(p, ObjectData{
+        .Model = ModelData{ .model = plane_model, .bbox = rl.getModelBoundingBox(plane_model) },
+    }, c);
 
     obj.scale = rl.Vector3.init(size.x, 0.001, size.y).scale(0.5);
     return obj;

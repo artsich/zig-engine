@@ -1,4 +1,4 @@
-﻿const rl = @import("raylib");
+const rl = @import("raylib");
 const textFormat = rl.textFormat;
 
 pub fn info(text: [*:0]const u8, args: anytype) void {
