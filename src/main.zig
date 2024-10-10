@@ -35,75 +35,6 @@ const AppMode = enum {
     Game,
 };
 
-const GL_READ_FRAMEBUFFER = 0x8CA8;
-const GL_DRAW_FRAMEBUFFER = 0x8CA9;
-const GL_DEPTH_BUFFER_BIT = 0x00000100;
-
-const GBuffer = struct {
-    framebuffer: u32,
-    albedoSpec: u32,
-    normals: u32,
-    positions: u32,
-    depth: u32,
-
-    pub fn init(width: i32, height: i32) @This() {
-        const framebuffer = rl.gl.rlLoadFramebuffer();
-        if (framebuffer == 0) {
-            rl.traceLog(rl.TraceLogLevel.log_error, "Failed to create gbuffer.");
-            unreachable;
-        }
-
-        rl.gl.rlEnableFramebuffer(framebuffer);
-        defer rl.gl.rlDisableFramebuffer();
-
-        const positionsTex = rl.gl.rlLoadTexture(null, width, height, @intFromEnum(rl.gl.rlPixelFormat.rl_pixelformat_uncompressed_r32g32b32), 1);
-        const normalTex = rl.gl.rlLoadTexture(null, width, height, @intFromEnum(rl.gl.rlPixelFormat.rl_pixelformat_uncompressed_r32g32b32), 1);
-        const albedoSpecTex = rl.gl.rlLoadTexture(null, width, height, @intFromEnum(rl.gl.rlPixelFormat.rl_pixelformat_uncompressed_r8g8b8a8), 1);
-
-        rl.gl.rlActiveDrawBuffers(3);
-
-        rl.gl.rlFramebufferAttach(framebuffer, positionsTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_color_channel0), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
-        rl.gl.rlFramebufferAttach(framebuffer, normalTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_color_channel1), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
-        rl.gl.rlFramebufferAttach(framebuffer, albedoSpecTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_color_channel2), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
-
-        const depthTex = rl.gl.rlLoadTextureDepth(width, height, true);
-        rl.gl.rlFramebufferAttach(framebuffer, depthTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_depth), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_renderbuffer), 0);
-
-        if (rl.gl.rlFramebufferComplete(framebuffer)) {
-            rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat("FBO: [ID %i] Framebuffer object created successfully", .{framebuffer}));
-        } else unreachable;
-
-        rl.gl.rlDisableFramebuffer();
-
-        return GBuffer{
-            .framebuffer = framebuffer,
-            .albedoSpec = albedoSpecTex,
-            .normals = normalTex,
-            .positions = positionsTex,
-            .depth = depthTex,
-        };
-    }
-
-    pub fn copyDepthTo(self: @This(), target: u32) void {
-        rl.gl.rlBindFramebuffer(GL_READ_FRAMEBUFFER, self.framebuffer);
-        rl.gl.rlBindFramebuffer(GL_DRAW_FRAMEBUFFER, target);
-        rl.gl.rlBlitFramebuffer(0, 0, window_width, window_height, 0, 0, window_width, window_height, GL_DEPTH_BUFFER_BIT);
-        rl.gl.rlDisableFramebuffer();
-    }
-
-    pub fn begin(self: @This()) void {
-        rl.gl.rlEnableFramebuffer(self.framebuffer);
-    }
-
-    pub fn clear(_: @This()) void {
-        rl.gl.rlClearScreenBuffers();
-    }
-
-    pub fn end(_: @This()) void {
-        rl.gl.rlDisableFramebuffer();
-    }
-};
-
 fn getEnumCount(comptime T: type) usize {
     return @typeInfo(T).Enum.fields.len;
 }
@@ -147,7 +78,7 @@ const State = struct {
     render_target: rl.RenderTexture2D,
     picking_texture: rl.RenderTexture2D,
 
-    gbuffer: GBuffer,
+    gbuffer: gpu.GBuffer,
     gbuffer_shader: rl.Shader,
     gbuffer_texture_type: GBufferTexture = GBufferTexture.Shading,
 
@@ -733,10 +664,10 @@ pub fn main() anyerror!void {
     rl.disableCursor();
 
     try zopengl.loadCoreProfile(getProcAddress, 3, 3);
-
     defer rl.closeWindow();
 
-    state = .{ .mode = AppMode.Editor, .camera_mode = rl.CameraMode.camera_free, .main_camera = .{ .position = Vector3.init(0.0, 10.0, 10.0), .target = Vector3.zero(), .up = Vector3.init(0.0, 1.0, 0.0), .fovy = 45.0, .projection = rl.CameraProjection.camera_perspective }, .dir = Vector2.init(0.0, 0.0), .mouse_delta = Vector2.zero(), .gizmo = undefined, .render_target = loadRenderTextureDepthTex(window_width, window_height), .picking_texture = loadPickingTexture(window_width, window_height), .objects = std.ArrayList(scene.SceneObject).init(allocator), .gbuffer = GBuffer.init(window_width, window_height), .gbuffer_shader = rl.loadShader("res/shaders/gbuffer.vs.glsl", "res/shaders/gbuffer.fs.glsl"), .deferred_shading_shader = rl.loadShader("res/shaders/deferred_shading.vs.glsl", "res/shaders/deferred_shading.fs.glsl"), .volume_light_shader = rl.loadShader("res/shaders/volume_light.vs.glsl", "res/shaders/volume_light.fs.glsl") };
+    state = .{ .mode = AppMode.Editor, .camera_mode = rl.CameraMode.camera_free, .main_camera = .{ .position = Vector3.init(0.0, 10.0, 10.0), .target = Vector3.zero(), .up = Vector3.init(0.0, 1.0, 0.0), .fovy = 45.0, .projection = rl.CameraProjection.camera_perspective }, .dir = Vector2.init(0.0, 0.0), .mouse_delta = Vector2.zero(), .gizmo = undefined, .render_target = loadRenderTextureDepthTex(window_width, window_height), .picking_texture = loadPickingTexture(window_width, window_height), .objects = std.ArrayList(scene.SceneObject).init(allocator), .gbuffer = gpu.GBuffer.init(window_width, window_height), .gbuffer_shader = rl.loadShader("res/shaders/gbuffer.vs.glsl", "res/shaders/gbuffer.fs.glsl"), .deferred_shading_shader = rl.loadShader("res/shaders/deferred_shading.vs.glsl", "res/shaders/deferred_shading.fs.glsl"), .volume_light_shader = rl.loadShader("res/shaders/volume_light.vs.glsl", "res/shaders/volume_light.fs.glsl") };
+
     light_ubo = gpu.PointLightUbo.init(0, "PointLights");
     defer light_ubo.destroy();
 
@@ -766,9 +697,6 @@ pub fn main() anyerror!void {
     // -----
 
     log.info("SHADER: sheders set up.", .{});
-
-    // first object used for light...
-    //try state.objects.append(scene.createCube(Vector3.init(0, 2, 0), Vector3.init(1, 1, 1), Color.lime));
 
     try state.objects.append(scene.createPlane(Vector3.init(0.0, 0.1, 0.0), Vector2.init(10.0, 10.0), Color.dark_gray));
     var wall = scene.createPlane(Vector3.init(0, 5, -5), Vector2.init(10.0, 10.0), Color.dark_gray);

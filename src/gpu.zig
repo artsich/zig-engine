@@ -55,3 +55,74 @@ pub const PointLightGpu = struct {
 };
 
 pub const PointLightUbo = UniformBuffer(PointLightGpu);
+
+const GL_READ_FRAMEBUFFER = 0x8CA8;
+const GL_DRAW_FRAMEBUFFER = 0x8CA9;
+const GL_DEPTH_BUFFER_BIT = 0x00000100;
+
+pub const GBuffer = struct {
+    framebuffer: u32,
+    albedoSpec: u32,
+    normals: u32,
+    positions: u32,
+    depth: u32,
+
+    pub fn init(width: i32, height: i32) @This() {
+        const framebuffer = rl.gl.rlLoadFramebuffer();
+        if (framebuffer == 0) {
+            rl.traceLog(rl.TraceLogLevel.log_error, "Failed to create gbuffer.");
+            unreachable;
+        }
+
+        rl.gl.rlEnableFramebuffer(framebuffer);
+        defer rl.gl.rlDisableFramebuffer();
+
+        const positionsTex = rl.gl.rlLoadTexture(null, width, height, @intFromEnum(rl.gl.rlPixelFormat.rl_pixelformat_uncompressed_r32g32b32), 1);
+        const normalTex = rl.gl.rlLoadTexture(null, width, height, @intFromEnum(rl.gl.rlPixelFormat.rl_pixelformat_uncompressed_r32g32b32), 1);
+        const albedoSpecTex = rl.gl.rlLoadTexture(null, width, height, @intFromEnum(rl.gl.rlPixelFormat.rl_pixelformat_uncompressed_r8g8b8a8), 1);
+
+        rl.gl.rlActiveDrawBuffers(3);
+
+        rl.gl.rlFramebufferAttach(framebuffer, positionsTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_color_channel0), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
+        rl.gl.rlFramebufferAttach(framebuffer, normalTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_color_channel1), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
+        rl.gl.rlFramebufferAttach(framebuffer, albedoSpecTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_color_channel2), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
+
+        const depthTex = rl.gl.rlLoadTextureDepth(width, height, true);
+        rl.gl.rlFramebufferAttach(framebuffer, depthTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_depth), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_renderbuffer), 0);
+
+        if (rl.gl.rlFramebufferComplete(framebuffer)) {
+            rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat("FBO: [ID %i] Framebuffer object created successfully", .{framebuffer}));
+        } else unreachable;
+
+        rl.gl.rlDisableFramebuffer();
+
+        return GBuffer{
+            .framebuffer = framebuffer,
+            .albedoSpec = albedoSpecTex,
+            .normals = normalTex,
+            .positions = positionsTex,
+            .depth = depthTex,
+        };
+    }
+
+    pub fn copyDepthTo(self: @This(), target: u32) void {
+        rl.gl.rlBindFramebuffer(GL_READ_FRAMEBUFFER, self.framebuffer);
+        rl.gl.rlBindFramebuffer(GL_DRAW_FRAMEBUFFER, target);
+        const w = rl.getScreenWidth();
+        const h = rl.getScreenHeight();
+        rl.gl.rlBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_DEPTH_BUFFER_BIT);
+        rl.gl.rlDisableFramebuffer();
+    }
+
+    pub fn begin(self: @This()) void {
+        rl.gl.rlEnableFramebuffer(self.framebuffer);
+    }
+
+    pub fn clear(_: @This()) void {
+        rl.gl.rlClearScreenBuffers();
+    }
+
+    pub fn end(_: @This()) void {
+        rl.gl.rlDisableFramebuffer();
+    }
+};
