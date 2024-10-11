@@ -322,6 +322,14 @@ fn updateGame() void {
         state.dir = Vector2.init(0.0, 0.0);
     }
 
+    const light = getSceneObjectById(17);
+    const radius = 5.0;
+
+    const dx = radius * std.math.sin(state.now);
+    const dz = radius * std.math.cos(state.now);
+
+    light.position = rl.Vector3.init(dx, light.position.y, dz);
+
     // const acceleration: f32 = 10.0;
     // const velocity = Vector2.scale(state.dir, acceleration * state.delta);
     //
@@ -439,6 +447,7 @@ fn stencilLightPass(ligths_transforms: []const rl.Matrix) void {
     zgl.depthMask(0);
     zgl.colorMask(0, 0, 0, 0);
     zgl.stencilOp(zgl.KEEP, zgl.INCR_WRAP, zgl.KEEP);
+    zgl.stencilFunc(zgl.ALWAYS, zgl.ZERO, 0xFF);
 
     const default_shader = resources.default_material.shader;
     resources.default_material.shader = resources.instanced_shader;
@@ -521,7 +530,6 @@ fn lightPass() void {
     zgl.enable(zgl.DEPTH_TEST);
     zgl.cullFace(zgl.BACK);
 
-    zgl.stencilFunc(zgl.ALWAYS, zgl.ZERO, 0xFF);
     zgl.disable(zgl.STENCIL_TEST);
 }
 
@@ -724,6 +732,12 @@ pub fn main() anyerror!void {
     } } });
 
     try state.objects.append(.{ .position = Vector3.init(-5, 2, 0), .color = Color.white, .id = 16, .rotations = Vector3.zero(), .scale = Vector3.zero(), .data = scene.ObjectData{ .Light = .{
+        .Point = .{
+            .radius = 5.0,
+        },
+    } } });
+
+    try state.objects.append(.{ .position = Vector3.init(0, 2, 7), .color = Color.white, .id = 17, .rotations = Vector3.zero(), .scale = Vector3.zero(), .data = scene.ObjectData{ .Light = .{
         .Point = .{
             .radius = 5.0,
         },
