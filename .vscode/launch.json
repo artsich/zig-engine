@@ -5,7 +5,7 @@
             "type": "lldb",
             "request": "launch",
             "name": "Debug",
-            "program": "${workspaceFolder}/zig-out/bin/zig-engine.exe", 
+            "program": "${workspaceFolder}/zig-out/bin/zig-engine", 
             "args": [],
             "cwd": "${workspaceFolder}",
             "preLaunchTask": "build" 

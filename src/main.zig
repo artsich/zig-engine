@@ -22,13 +22,15 @@ const Camera2d = rl.Camera2D;
 const Color = rl.Color;
 const KeyboardKey = rl.KeyboardKey;
 
-const window_width = 3300;
+const window_width = 1280;
 const window_height = (9 * window_width) / 16;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
 var models = resources.Models.init(allocator);
+
+var simple_text: resources.ResourceText = undefined;
 
 const AppMode = enum {
     Editor,
@@ -248,6 +250,12 @@ fn updateEditor() void {
 
     if (!rl.isKeyDown(rl.KeyboardKey.key_left_control)) {
         state.main_camera.update(rl.CameraMode.camera_free);
+    }
+
+    if (simple_text.isChanged()) {
+        simple_text.load();
+        const text = simple_text.getData();
+        std.debug.print("file is changed!: {s}", .{text.*});
     }
 
     tryUndoCommands();
@@ -660,6 +668,10 @@ pub fn getProcAddress(procname: [*:0]const u8) ?GlProc {
 extern fn glfwGetProcAddress(procname: [*:0]const u8) ?GlProc;
 
 pub fn main() anyerror!void {
+    defer {
+        _ = gpa.deinit();
+    }
+
     rl.initWindow(window_width, window_height, "Game 1");
     rl.setWindowState(.{
         .window_resizable = false,
@@ -667,6 +679,10 @@ pub fn main() anyerror!void {
         // .msaa_4x_hint = true,
         // .window_highdpi = true,
     });
+
+    simple_text = resources.ResourceText.init("res/simple.txt", allocator);
+    simple_text.load();
+    defer simple_text.unload();
 
     rl.setTargetFPS(9999);
     rl.disableCursor();
@@ -745,9 +761,6 @@ pub fn main() anyerror!void {
 
     log.info("MODELS: Models loaded.", .{});
 
-    defer {
-        _ = gpa.deinit();
-    }
     defer unloadRenderTextureDepthTex(state.render_target);
     defer unloadRenderTextureDepthTex(state.picking_texture);
     defer state.objects.deinit();
