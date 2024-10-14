@@ -9,7 +9,7 @@ const zgl = zopengl.bindings;
 
 const gizmo = @import("gizmo.zig");
 const ids = @import("id.zig");
-const resources = @import("resources.zig");
+const res = @import("resources.zig");
 const scene = @import("scene.zig");
 const log = @import("log.zig");
 const math = @import("math.zig");
@@ -28,9 +28,10 @@ const window_height = (9 * window_width) / 16;
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
-var models = resources.Models.init(allocator);
+var models = res.Models.init(allocator);
 
-var simple_text: resources.ResourceText = undefined;
+var simple_text: res.ResourceText = undefined;
+var simple_shader: res.ResourceShader = undefined;
 
 const AppMode = enum {
     Editor,
@@ -258,6 +259,11 @@ fn updateEditor() void {
         std.debug.print("file is changed!: {s}", .{text.*});
     }
 
+    if (simple_shader.isChanged()) {
+        simple_shader.load();
+        log.info("Shader reloaded: %d", .{simple_shader.data.id});
+    }
+
     tryUndoCommands();
     var gizmo_was_active = false;
     if (state.touch_id > 0) {
@@ -457,14 +463,14 @@ fn stencilLightPass(ligths_transforms: []const rl.Matrix) void {
     zgl.stencilOp(zgl.KEEP, zgl.INCR_WRAP, zgl.KEEP);
     zgl.stencilFunc(zgl.ALWAYS, zgl.ZERO, 0xFF);
 
-    const default_shader = resources.default_material.shader;
-    resources.default_material.shader = resources.instanced_shader;
-    defer resources.default_material.shader = default_shader;
+    const default_shader = res.default_material.shader;
+    res.default_material.shader = res.instanced_shader;
+    defer res.default_material.shader = default_shader;
 
     rl.beginMode3D(state.main_camera);
     {
         zgl.cullFace(zgl.FRONT);
-        resources.sphere_mesh.drawInstanced(resources.default_material, ligths_transforms);
+        res.sphere_mesh.drawInstanced(res.default_material, ligths_transforms);
     }
     rl.endMode3D();
 
@@ -472,7 +478,7 @@ fn stencilLightPass(ligths_transforms: []const rl.Matrix) void {
     rl.beginMode3D(state.main_camera);
     {
         zgl.cullFace(zgl.BACK);
-        resources.sphere_mesh.drawInstanced(resources.default_material, ligths_transforms);
+        res.sphere_mesh.drawInstanced(res.default_material, ligths_transforms);
     }
     rl.endMode3D();
 
@@ -529,8 +535,8 @@ fn lightPass() void {
         light_ubo.upload(point_lights[0..light_id], zgl.DYNAMIC_DRAW);
         light_ubo.bindWithShader(state.volume_light_shader);
 
-        resources.default_material.shader = state.volume_light_shader;
-        resources.sphere_mesh.drawInstanced(resources.default_material, light_transforms);
+        res.default_material.shader = state.volume_light_shader;
+        res.sphere_mesh.drawInstanced(res.default_material, light_transforms);
     }
     rl.endMode3D();
     rl.endBlendMode();
@@ -680,7 +686,13 @@ pub fn main() anyerror!void {
         // .window_highdpi = true,
     });
 
-    simple_text = resources.ResourceText.init("res/simple.txt", allocator);
+    simple_shader = res.createShader("res/shaders/stencil_light.shader", allocator);
+    simple_shader.load();
+    defer simple_shader.unload();
+
+    // std.process.exit(0);
+
+    simple_text = res.createText("res/simple.txt", allocator);
     simple_text.load();
     defer simple_text.unload();
 
@@ -695,7 +707,7 @@ pub fn main() anyerror!void {
     light_ubo = gpu.PointLightUbo.init(0, "PointLights");
     defer light_ubo.destroy();
 
-    resources.init_default_resources();
+    res.init_default_resources();
 
     // shader setup
     state.gbuffer_shader.locs[@intFromEnum(rl.SHADER_LOC_MAP_DIFFUSE)] = rl.getShaderLocation(state.gbuffer_shader, "diffuseTexture");
