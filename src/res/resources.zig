@@ -88,6 +88,7 @@ pub fn deinit(_: Allocator) void {
     fw.deinit();
 }
 
+// run it once per secend
 pub fn tryHotReload() void {
     fw.update();
 

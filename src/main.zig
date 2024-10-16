@@ -250,8 +250,6 @@ pub fn processCommands() void {
 }
 
 fn updateEditor() void {
-    resources.update();
-
     const editor_gizmo = &state.gizmo;
 
     if (!rl.isKeyDown(rl.KeyboardKey.key_left_control)) {
@@ -356,6 +354,8 @@ fn update() !void {
     if (rl.isKeyPressed(KeyboardKey.key_f10)) {
         rl.toggleFullscreen();
     }
+
+    resources.update();
 
     state.mouse_delta = rl.getMouseDelta().normalize();
 

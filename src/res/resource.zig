@@ -111,16 +111,22 @@ pub const ShaderLoader = struct {
         return parsed;
     }
 
-    pub fn load(self: *@This(), res: *Res(rl.Shader)) void {
-        const shader_desc = loadShaderDesc(res.file, self.allocator) catch {
-            log.err("[RES]: Shader loading error...", .{});
+    pub fn loadShader(vs: [:0]const u8, fs: [:0]const u8) error{CompilatinFailed}!rl.Shader {
+        const shader = rl.loadShader(@ptrCast(vs.ptr), @ptrCast(fs.ptr));
 
-            switch (res.state) {
-                .Empty => {
-                    // set default shader...
-                    // res.data =
-                },
-                else => {},
+        if (shader.id == 0) {
+            return error.CompilatinFailed;
+        }
+
+        return shader;
+    }
+
+    pub fn load(self: *@This(), res: *Res(rl.Shader)) void {
+        const shader_desc = loadShaderDesc(res.file, self.allocator) catch |err| {
+            std.debug.print("WARN: RES: SHADER: Description file loading error - {s}\n", .{@errorName(err)});
+            if (res.state == ResState.Empty) {
+                // set default shader...
+                unreachable;
             }
             return;
         };
@@ -129,34 +135,35 @@ pub const ShaderLoader = struct {
 
         const vertex_path: [:0]u8 = self.allocator.dupeZ(u8, shader_desc.value.vertex) catch unreachable;
         const fragment_path: [:0]u8 = self.allocator.dupeZ(u8, shader_desc.value.fragment) catch unreachable;
-        const shader = self.allocator.create(rl.Shader) catch unreachable;
-        shader.* = rl.loadShader(@ptrCast(vertex_path.ptr), @ptrCast(fragment_path.ptr));
-
-        if (shader.id == 0) {
+        const loaded_shader = loadShader(vertex_path, fragment_path) catch {
             if (res.state == ResState.Empty) {
-                unreachable; // provide default shader...
+                unreachable; // set default shader...
             }
-            self.allocator.destroy(shader);
+
             self.allocator.free(vertex_path);
             self.allocator.free(fragment_path);
             return;
-        } else if (res.state == ResState.Loaded) {
+        };
+
+        const shader = self.allocator.create(rl.Shader) catch unreachable;
+        shader.* = loaded_shader;
+
+        if (res.state == ResState.Loaded) {
             res.unload();
         }
 
         res.data = shader;
 
-        var deps = self.allocator.alloc(io.File, 2) catch unreachable;
+        const deps = self.allocator.alloc(io.File, 2) catch unreachable;
         deps[0] = io.File.init(vertex_path);
         deps[1] = io.File.init(fragment_path);
-
         res.sub_files = deps;
     }
 
     pub fn unload(self: *@This(), res: *Res(rl.Shader)) void {
         rl.unloadShader(res.data.*);
         if (res.sub_files.len > 0) {
-            // mmmmm, have to be null terminated type to remove it right....
+            // allocator does not see null terminated value if not cast
             self.allocator.free(@as([:0]const u8, @ptrCast(res.sub_files[0].path)));
             self.allocator.free(@as([:0]const u8, @ptrCast(res.sub_files[1].path)));
             self.allocator.free(res.sub_files);
