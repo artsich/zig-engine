@@ -1,7 +1,7 @@
-const rl = @import("raylib");
+﻿const rl = @import("raylib");
 const math = @import("math.zig");
 const id = @import("id.zig");
-const resources = @import("resources.zig");
+const resources = @import("res/resources.zig");
 
 var SceneObjectsIds = id.Generator.init();
 

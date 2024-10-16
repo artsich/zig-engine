@@ -9,7 +9,10 @@ const zgl = zopengl.bindings;
 
 const gizmo = @import("gizmo.zig");
 const ids = @import("id.zig");
-const resources = @import("resources.zig");
+
+const resources = @import("res/resources.zig");
+const res = @import("res/resource.zig");
+
 const scene = @import("scene.zig");
 const log = @import("log.zig");
 const math = @import("math.zig");
@@ -29,8 +32,6 @@ var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 const allocator = gpa.allocator();
 
 var models = resources.Models.init(allocator);
-
-var simple_text: resources.ResourceText = undefined;
 
 const AppMode = enum {
     Editor,
@@ -85,7 +86,10 @@ const State = struct {
     gbuffer_texture_type: GBufferTexture = GBufferTexture.Shading,
 
     deferred_shading_shader: rl.Shader,
-    volume_light_shader: rl.Shader,
+    //volume_light_shader: rl.Shader,
+
+    volume_light_shader: *res.Res(rl.Shader) = undefined,
+    text: *res.Res(res.Text) = undefined,
 
     pub fn getRayFromCamera(self: *State) rl.Ray {
         const screenWidth: f32 = @floatFromInt(rl.getScreenWidth());
@@ -246,16 +250,12 @@ pub fn processCommands() void {
 }
 
 fn updateEditor() void {
+    resources.update();
+
     const editor_gizmo = &state.gizmo;
 
     if (!rl.isKeyDown(rl.KeyboardKey.key_left_control)) {
         state.main_camera.update(rl.CameraMode.camera_free);
-    }
-
-    if (simple_text.isChanged()) {
-        simple_text.load();
-        const text = simple_text.getData();
-        std.debug.print("file is changed!: {s}", .{text.*});
     }
 
     tryUndoCommands();
@@ -457,6 +457,7 @@ fn stencilLightPass(ligths_transforms: []const rl.Matrix) void {
     zgl.stencilOp(zgl.KEEP, zgl.INCR_WRAP, zgl.KEEP);
     zgl.stencilFunc(zgl.ALWAYS, zgl.ZERO, 0xFF);
 
+    // todo: fix this shit
     const default_shader = resources.default_material.shader;
     resources.default_material.shader = resources.instanced_shader;
     defer resources.default_material.shader = default_shader;
@@ -503,9 +504,21 @@ fn lightPass() void {
         rl.beginBlendMode(rl.BlendMode.blend_add_colors);
         zgl.disable(zgl.DEPTH_TEST);
 
+        const light_shader = state.volume_light_shader.data.*;
+        rl.gl.rlEnableShader(light_shader.id);
+
+        light_shader.locs[@intFromEnum(rl.ShaderLocationIndex.shader_loc_vector_view)] =
+            rl.getShaderLocation(light_shader, "camPos");
+        light_shader.locs[@intFromEnum(rl.ShaderLocationIndex.shader_loc_matrix_model)] =
+            rl.getShaderLocationAttrib(light_shader, "instanceTransform");
+
         const cameraPos: [3]f32 = .{ state.main_camera.position.x, state.main_camera.position.y, state.main_camera.position.z };
         const camPosIndexLoc: usize = @intCast(@intFromEnum(rl.ShaderLocationIndex.shader_loc_vector_view));
-        rl.setShaderValue(state.volume_light_shader, state.volume_light_shader.locs[camPosIndexLoc], &cameraPos, rl.ShaderUniformDataType.shader_uniform_vec3);
+        rl.setShaderValue(light_shader, light_shader.locs[camPosIndexLoc], &cameraPos, rl.ShaderUniformDataType.shader_uniform_vec3);
+
+        rl.gl.rlSetUniformSampler(rl.getShaderLocation(light_shader, "gPosition"), 1);
+        rl.gl.rlSetUniformSampler(rl.getShaderLocation(light_shader, "gNormal"), 2);
+        rl.gl.rlSetUniformSampler(rl.getShaderLocation(light_shader, "gAlbedoSpec"), 3);
 
         // zero slot is reserved by raylib!
         rl.gl.rlActiveTextureSlot(1);
@@ -527,10 +540,13 @@ fn lightPass() void {
             }
         }
         light_ubo.upload(point_lights[0..light_id], zgl.DYNAMIC_DRAW);
-        light_ubo.bindWithShader(state.volume_light_shader);
+        light_ubo.bindWithShader(light_shader);
 
-        resources.default_material.shader = state.volume_light_shader;
+        resources.default_material.shader = light_shader;
+
         resources.sphere_mesh.drawInstanced(resources.default_material, light_transforms);
+
+        rl.gl.rlDisableShader();
     }
     rl.endMode3D();
     rl.endBlendMode();
@@ -651,6 +667,8 @@ fn render() !void {
         rl.drawText("GP: NOT DETECTED", 10, 50, 30, Color.gray);
     }
 
+    rl.drawText(rl.textFormat("Dynamic text: %s", .{state.text.data.str.ptr}), 10, 500, 30, rl.Color.green);
+
     const screenWidth = rl.getScreenWidth();
     const screenHeight = rl.getScreenHeight();
     rl.drawText(rl.textFormat("%dx%d", .{ screenWidth, screenHeight }), 10, 90, 30, rl.Color.green);
@@ -680,22 +698,38 @@ pub fn main() anyerror!void {
         // .window_highdpi = true,
     });
 
-    simple_text = resources.ResourceText.init("res/simple.txt", allocator);
-    simple_text.load();
-    defer simple_text.unload();
-
     rl.setTargetFPS(9999);
     rl.disableCursor();
 
     try zopengl.loadCoreProfile(getProcAddress, 3, 3);
     defer rl.closeWindow();
 
-    state = .{ .mode = AppMode.Editor, .camera_mode = rl.CameraMode.camera_free, .main_camera = .{ .position = Vector3.init(0.0, 10.0, 10.0), .target = Vector3.zero(), .up = Vector3.init(0.0, 1.0, 0.0), .fovy = 45.0, .projection = rl.CameraProjection.camera_perspective }, .dir = Vector2.init(0.0, 0.0), .mouse_delta = Vector2.zero(), .gizmo = undefined, .render_target = loadRenderTextureDepthTex(window_width, window_height), .picking_texture = loadPickingTexture(window_width, window_height), .objects = std.ArrayList(scene.SceneObject).init(allocator), .gbuffer = gpu.GBuffer.init(window_width, window_height), .gbuffer_shader = rl.loadShader("res/shaders/gbuffer.vs.glsl", "res/shaders/gbuffer.fs.glsl"), .deferred_shading_shader = rl.loadShader("res/shaders/deferred_shading.vs.glsl", "res/shaders/deferred_shading.fs.glsl"), .volume_light_shader = rl.loadShader("res/shaders/volume_light.vs.glsl", "res/shaders/volume_light.fs.glsl") };
+    resources.init(allocator);
+    defer resources.deinit(allocator);
+
+    state = .{
+        .mode = AppMode.Editor,
+        .camera_mode = rl.CameraMode.camera_free,
+        .main_camera = .{ .position = Vector3.init(0.0, 10.0, 10.0), .target = Vector3.zero(), .up = Vector3.init(0.0, 1.0, 0.0), .fovy = 45.0, .projection = rl.CameraProjection.camera_perspective },
+        .dir = Vector2.init(0.0, 0.0),
+        .mouse_delta = Vector2.zero(),
+        .gizmo = undefined,
+        .render_target = loadRenderTextureDepthTex(window_width, window_height),
+        .picking_texture = loadPickingTexture(window_width, window_height),
+        .objects = std.ArrayList(scene.SceneObject).init(allocator),
+        .gbuffer = gpu.GBuffer.init(window_width, window_height),
+        .gbuffer_shader = rl.loadShader("res/shaders/gbuffer.vs.glsl", "res/shaders/gbuffer.fs.glsl"),
+        .deferred_shading_shader = rl.loadShader("res/shaders/deferred_shading.vs.glsl", "res/shaders/deferred_shading.fs.glsl"),
+    };
+
+    state.volume_light_shader = resources.load(rl.Shader, "res/shaders/stencil_light.shader", allocator);
+    defer resources.unload(rl.Shader, state.volume_light_shader, allocator);
+
+    state.text = resources.load(res.Text, "res/simple.txt", allocator);
+    defer resources.unload(res.Text, state.text, allocator);
 
     light_ubo = gpu.PointLightUbo.init(0, "PointLights");
     defer light_ubo.destroy();
-
-    resources.init_default_resources();
 
     // shader setup
     state.gbuffer_shader.locs[@intFromEnum(rl.SHADER_LOC_MAP_DIFFUSE)] = rl.getShaderLocation(state.gbuffer_shader, "diffuseTexture");
@@ -709,14 +743,7 @@ pub fn main() anyerror!void {
     rl.gl.rlSetUniformSampler(rl.getShaderLocation(state.deferred_shading_shader, "gAlbedoSpec"), 3);
     rl.gl.rlDisableShader();
 
-    state.volume_light_shader.locs[@intFromEnum(rl.ShaderLocationIndex.shader_loc_vector_view)] = rl.getShaderLocation(state.volume_light_shader, "camPos");
-    state.volume_light_shader.locs[@intFromEnum(rl.ShaderLocationIndex.shader_loc_matrix_model)] = rl.getShaderLocationAttrib(state.volume_light_shader, "instanceTransform");
-
-    rl.gl.rlEnableShader(state.volume_light_shader.id);
-    rl.gl.rlSetUniformSampler(rl.getShaderLocation(state.volume_light_shader, "gPosition"), 1);
-    rl.gl.rlSetUniformSampler(rl.getShaderLocation(state.volume_light_shader, "gNormal"), 2);
-    rl.gl.rlSetUniformSampler(rl.getShaderLocation(state.volume_light_shader, "gAlbedoSpec"), 3);
-    rl.gl.rlDisableShader();
+    // todo: this should be set during initialization...
 
     // -----
 
