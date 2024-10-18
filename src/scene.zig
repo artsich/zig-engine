@@ -153,6 +153,14 @@ pub const SceneObject = struct {
     }
 };
 
+pub fn createLight(p: rl.Vector3, color: rl.Color, radius: f32) SceneObject {
+    return SceneObject.init(p, ObjectData{ .Light = .{
+        .Point = .{
+            .radius = radius,
+        },
+    } }, color);
+}
+
 pub fn createModel(p: rl.Vector3, file_name: [*:0]const u8, models: *resources.Models) SceneObject {
     const model = models.*.loadModel(file_name);
     const bbox = rl.getModelBoundingBox(model);

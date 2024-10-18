@@ -147,6 +147,10 @@ const Action = union(enum) {
             .MovedObject => |moved_action| moved_action.undo(),
         }
     }
+
+    pub fn select(id: u32, app_state: *State) Action {
+        return .{ .SelectObject = SelectObjectAction.init(id, app_state) };
+    }
 };
 
 const MovedObjectAction = struct {
@@ -297,10 +301,10 @@ fn updateEditor() void {
         if (picked_id > 0) {
             const object_id: u32 = @intCast(picked_id);
             if (object_id != state.touch_id) {
-                addAction(.{ .SelectObject = SelectObjectAction.init(object_id, &state) });
+                addAction(Action.select(object_id, &state));
             }
         } else if (state.touch_id > 0) {
-            addAction(.{ .SelectObject = SelectObjectAction.init(0, &state) });
+            addAction(Action.select(0, &state));
         }
     }
 
@@ -313,7 +317,7 @@ fn updateEditor() void {
     }
 
     if (state.touch_id > 0 and rl.isKeyPressed(rl.KeyboardKey.key_c)) {
-        addAction(.{ .SelectObject = SelectObjectAction.init(0, &state) });
+        addAction(Action.select(0, &state));
     }
 
     processCommands();
@@ -779,24 +783,13 @@ pub fn main() anyerror!void {
     nanosuit.scale = Vector3.scale(Vector3.one(), 0.25);
     try state.objects.append(nanosuit);
     try state.objects.append(scene.createModel(Vector3.init(-2.0, 1.0, 0.0), "res/models/bin/cyborg.glb", &models)); // todo: model shit, specular is not loaded
-
-    try state.objects.append(.{ .position = Vector3.init(3, 2, 0), .color = Color.white, .id = 15, .rotations = Vector3.zero(), .scale = Vector3.zero(), .data = scene.ObjectData{ .Light = .{
-        .Point = .{
-            .radius = 5.0,
-        },
-    } } });
-
-    try state.objects.append(.{ .position = Vector3.init(-5, 2, 0), .color = Color.white, .id = 16, .rotations = Vector3.zero(), .scale = Vector3.zero(), .data = scene.ObjectData{ .Light = .{
-        .Point = .{
-            .radius = 5.0,
-        },
-    } } });
-
-    try state.objects.append(.{ .position = Vector3.init(0, 2, 7), .color = Color.white, .id = 17, .rotations = Vector3.zero(), .scale = Vector3.zero(), .data = scene.ObjectData{ .Light = .{
-        .Point = .{
-            .radius = 5.0,
-        },
-    } } });
+    var error_model = scene.createModel(Vector3.init(2.0, 8.0, 0.0), "res/models/bin/error_text.glb", &models);
+    error_model.scale = Vector3.one().scale(50);
+    error_model.rotations = Vector3.init(0.0, 0.0, 3.14 / 2.0);
+    try state.objects.append(error_model);
+    try state.objects.append(scene.createLight(Vector3.init(3, 2, 0), Color.white, 5.0));
+    try state.objects.append(scene.createLight(Vector3.init(-5, 2, 0), Color.white, 5.0));
+    try state.objects.append(scene.createLight(Vector3.init(0, 2, 7), Color.white, 5.0));
 
     log.info("MODELS: Models loaded.", .{});
 
