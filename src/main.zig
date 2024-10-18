@@ -195,6 +195,8 @@ const SelectObjectAction = struct {
     }
 
     pub fn do(self: *const @This()) void {
+        std.debug.assert(self.selected_obj_id != self.state.touch_id);
+
         self.state.touch_id = self.selected_obj_id;
         if (self.state.touch_id > 0) {
             state.gizmo = gizmo.Gizmo.init(getSceneObjectById(self.state.touch_id));
@@ -308,6 +310,10 @@ fn updateEditor() void {
             const name = state.gbuffer_texture_type.getName();
             log.info("Display gbuffer - %s", .{name});
         }
+    }
+
+    if (state.touch_id > 0 and rl.isKeyPressed(rl.KeyboardKey.key_c)) {
+        addAction(.{ .SelectObject = SelectObjectAction.init(0, &state) });
     }
 
     processCommands();
@@ -759,6 +765,10 @@ pub fn main() anyerror!void {
     var wall2 = scene.createPlane(Vector3.init(10, 5, -5), Vector2.init(10.0, 10.0), Color.dark_gray);
     wall2.rotations = Vector3.init(3.14 / 2.0, -1.0, 0.0);
     try state.objects.append(wall2);
+
+    var wall3 = scene.createPlane(Vector3.init(-10, 5, -5), Vector2.init(10.0, 10.0), Color.dark_gray);
+    wall3.rotations = Vector3.init(3.14 / 2.0, 1.0, 0.0);
+    try state.objects.append(wall3);
 
     try state.objects.append(scene.createCube(Vector3.init(2, 1, 2), Vector3.init(2, 2, 2), Color.dark_purple));
     try state.objects.append(scene.createCube(Vector3.init(9, 3, 9), Vector3.init(4, 4, 4), Color.magenta));
