@@ -33,7 +33,7 @@ void main() {
         discard;
     }
 
-    float attenuation = 1.0 / (constant + linear * lightDistance + quadratic * lightDistance * lightDistance);
+    float attenuation = 1.0 / lightDistance; // (constant + linear * lightDistance + quadratic * lightDistance * lightDistance);
 
     float diff = max(dot(normal, lightDir), 0.0);
     vec3 diffuse = albedo * diff * attenuation;

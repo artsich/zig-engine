@@ -52,6 +52,7 @@ pub fn Loader(comptime T: type) type {
 
 const ResState = enum(u8) {
     Empty,
+    Default, // todo: when default state, don't upload it
     Loaded,
 };
 

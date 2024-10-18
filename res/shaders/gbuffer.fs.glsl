@@ -26,6 +26,8 @@ void main() {
     gPosition = fragPosition;
     //gNormal = normalize(fragNormal);
     gNormal = NormalFromBumpMap();
-    gAlbedoSpec.rgb = texture(diffuseTexture, fragTexCoord).rgb * fragColor.rgb * colDiffuse.rgb;
+    // todo: create diffuse texture with srgb...
+    gAlbedoSpec.rgb = pow(texture(diffuseTexture, fragTexCoord).rgb, vec3(2.2)) * fragColor.rgb * colDiffuse.rgb;
+    //gAlbedoSpec.rgb = texture(diffuseTexture, fragTexCoord).rgb * fragColor.rgb * colDiffuse.rgb;
     gAlbedoSpec.a = texture(specularTexture, fragTexCoord).r;
 }

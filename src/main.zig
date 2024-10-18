@@ -25,7 +25,7 @@ const Camera2d = rl.Camera2D;
 const Color = rl.Color;
 const KeyboardKey = rl.KeyboardKey;
 
-const window_width = 1280;
+const window_width = 1920;
 const window_height = (9 * window_width) / 16;
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -544,12 +544,14 @@ fn lightPass() void {
 
         resources.default_material.shader = light_shader;
 
+        zgl.enable(zgl.FRAMEBUFFER_SRGB);
         resources.sphere_mesh.drawInstanced(resources.default_material, light_transforms);
 
         rl.gl.rlDisableShader();
     }
     rl.endMode3D();
     rl.endBlendMode();
+    zgl.disable(zgl.FRAMEBUFFER_SRGB);
 
     zgl.enable(zgl.DEPTH_TEST);
     zgl.cullFace(zgl.BACK);
