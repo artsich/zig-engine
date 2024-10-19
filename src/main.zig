@@ -47,6 +47,7 @@ const GBufferTexture = enum(u32) {
     Position = 1,
     Normals = 2,
     Albedo = 3,
+    Depth = 4,
 
     pub fn getName(self: GBufferTexture) [*:0]const u8 {
         return switch (self) {
@@ -54,6 +55,7 @@ const GBufferTexture = enum(u32) {
             .Normals => "Normals",
             .Albedo => "Albedo",
             .Shading => "Shading",
+            .Depth => "Depth",
         };
     }
 };
@@ -615,6 +617,7 @@ fn renderDeferred() void {
                 .Albedo => state.gbuffer.albedoSpec,
                 .Normals => state.gbuffer.normals,
                 .Position => state.gbuffer.positions,
+                //.Depth => state.gbuffer.depth, // incorrect shader for depth texture...
                 .Shading => 0, // todo: Temp solution.
             },
             .width = window_width,

@@ -87,8 +87,8 @@ pub const GBuffer = struct {
         rl.gl.rlFramebufferAttach(framebuffer, normalTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_color_channel1), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
         rl.gl.rlFramebufferAttach(framebuffer, albedoSpecTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_color_channel2), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
 
-        const depthTex = rl.gl.rlLoadTextureDepth(width, height, true);
-        rl.gl.rlFramebufferAttach(framebuffer, depthTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_depth), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_renderbuffer), 0);
+        const depthTex = rl.gl.rlLoadTextureDepth(width, height, false);
+        rl.gl.rlFramebufferAttach(framebuffer, depthTex, @intFromEnum(rl.gl.rlFramebufferAttachType.rl_attachment_depth), @intFromEnum(rl.gl.rlFramebufferAttachTextureType.rl_attachment_texture2d), 0);
 
         if (rl.gl.rlFramebufferComplete(framebuffer)) {
             rl.traceLog(rl.TraceLogLevel.log_info, rl.textFormat("FBO: [ID %i] Framebuffer object created successfully", .{framebuffer}));
