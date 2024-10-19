@@ -64,6 +64,10 @@ const MAX_POINT_LIGHTS = 100;
 const State = struct {
     now: f32 = 0,
     delta: f32 = 0,
+
+    game_now: f32 = 0,
+    game_delta: f32 = 0,
+
     mode: AppMode,
     main_camera: Camera3d,
     camera_mode: rl.CameraMode,
@@ -256,6 +260,9 @@ pub fn processCommands() void {
 }
 
 fn updateEditor() void {
+    state.delta = rl.getFrameTime();
+    state.now += state.delta;
+
     const editor_gizmo = &state.gizmo;
 
     if (!rl.isKeyDown(rl.KeyboardKey.key_left_control)) {
@@ -324,6 +331,9 @@ fn updateEditor() void {
 }
 
 fn updateGame() void {
+    state.game_delta = rl.getFrameTime();
+    state.game_now += state.game_delta;
+
     state.gamepad = 0;
     state.main_camera.update(rl.CameraMode.camera_third_person);
 
@@ -338,11 +348,11 @@ fn updateGame() void {
         state.dir = Vector2.init(0.0, 0.0);
     }
 
-    const light = getSceneObjectById(17);
+    const light = getSceneObjectById(13);
     const radius = 5.0;
 
-    const dx = radius * std.math.sin(state.now);
-    const dz = radius * std.math.cos(state.now);
+    const dx = radius * std.math.sin(state.game_now);
+    const dz = radius * std.math.cos(state.game_now);
 
     light.position = rl.Vector3.init(dx, light.position.y, dz);
 
@@ -354,9 +364,6 @@ fn updateGame() void {
 }
 
 fn update() !void {
-    state.delta = rl.getFrameTime();
-    state.now += state.delta;
-
     if (rl.isKeyPressed(KeyboardKey.key_f1)) {
         switchAppState();
     }
@@ -642,7 +649,7 @@ fn render() !void {
 
     rl.endMode3D();
 
-    if (state.touch_id > 0) {
+    if (state.touch_id > 0 and state.mode == AppMode.Editor) {
         rl.beginMode3D(state.main_camera);
         rl.gl.rlDisableDepthTest();
 
