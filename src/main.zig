@@ -317,7 +317,7 @@ fn updateEditor() void {
         }
     }
 
-    if (rl.isKeyDown(rl.KeyboardKey.key_right_control)) {
+    if (rl.isKeyDown(rl.KeyboardKey.key_left_control)) {
         if (rl.isKeyPressed(rl.KeyboardKey.key_b)) {
             state.gbuffer_texture_type = @enumFromInt((@intFromEnum(state.gbuffer_texture_type) + 1) % getEnumCount(GBufferTexture));
             const name = state.gbuffer_texture_type.getName();
