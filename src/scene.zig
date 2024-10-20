@@ -167,19 +167,21 @@ pub fn createModel(p: rl.Vector3, file_name: [*:0]const u8, models: *resources.M
 
     for (0..@intCast(model.materialCount)) |i| {
         const map_albedo = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_albedo)];
-        if (map_albedo.*.texture.id > 0) {
+        if (map_albedo.texture.id > 0) {
             rl.genTextureMipmaps(&map_albedo.*.texture);
             rl.setTextureFilter(map_albedo.*.texture, rl.TextureFilter.texture_filter_bilinear);
+        } else {
+            map_albedo.texture = resources.default_diffuse_map;
         }
 
         // const map_mettal = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_metalness)];
-        // if (map_mettal.*.texture.id > 0) {
+        // if (map_mettal.texture.id > 0) {
         //     rl.genTextureMipmaps(&map_mettal.*.texture);
         //     rl.setTextureFilter(map_mettal.*.texture, rl.TextureFilter.texture_filter_bilinear);
         // }
 
         const map_normal = &model.materials[i].maps[@intFromEnum(rl.MaterialMapIndex.material_map_normal)];
-        if (map_normal.*.texture.id > 0) {
+        if (map_normal.texture.id > 0) {
             rl.genTextureMipmaps(&map_normal.*.texture);
             rl.setTextureFilter(map_normal.*.texture, rl.TextureFilter.texture_filter_bilinear);
         } else {

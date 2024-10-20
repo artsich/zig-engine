@@ -617,8 +617,7 @@ fn renderDeferred() void {
                 .Albedo => state.gbuffer.albedoSpec,
                 .Normals => state.gbuffer.normals,
                 .Position => state.gbuffer.positions,
-                //.Depth => state.gbuffer.depth, // incorrect shader for depth texture...
-                .Shading => 0, // todo: Temp solution.
+                else => 0,
             },
             .width = window_width,
             .height = window_height,
