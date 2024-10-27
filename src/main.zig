@@ -581,8 +581,6 @@ fn lightPass() void {
 fn renderDeferred() void {
     state.gbuffer.begin();
     {
-        defer state.gbuffer.end();
-        rl.gl.rlClearColor(0, 0, 0, 0);
         state.gbuffer.clear();
 
         rl.gl.rlDisableColorBlend();
@@ -592,22 +590,21 @@ fn renderDeferred() void {
         defer rl.endShaderMode();
 
         rl.beginMode3D(state.main_camera);
-        {
-            defer rl.endMode3D();
+        defer rl.endMode3D();
 
-            for (state.objects.items) |obj| {
-                switch (obj.data) {
-                    .Model => {
-                        obj.data.Model.useShader(state.gbuffer_shader);
-                        obj.render();
-                    },
-                    else => {},
-                }
+        for (state.objects.items) |obj| {
+            switch (obj.data) {
+                .Model => {
+                    obj.data.Model.useShader(state.gbuffer_shader);
+                    obj.render();
+                },
+                else => {},
             }
         }
     }
+    state.gbuffer.end();
 
-    state.gbuffer.copyDepthTo(0);
+    state.gbuffer.copyDepthToMain();
 
     if (state.gbuffer_texture_type == GBufferTexture.Shading) {
         lightPass();
@@ -623,7 +620,7 @@ fn renderDeferred() void {
             .height = window_height,
             .mipmaps = 1,
             .format = rl.PixelFormat.pixelformat_uncompressed_r32g32b32,
-        }, rl.Rectangle.init(0, 0, @floatFromInt(window_width), @floatFromInt(-window_height)), Vector2.init(0.0, 0.0), Color.white);
+        }, rl.Rectangle.init(0, 0, @floatFromInt(window_width), @floatFromInt(-window_height)), Vector2.zero(), Color.white);
     }
 }
 
@@ -690,8 +687,11 @@ fn render() !void {
 
     rl.drawText(rl.textFormat("Dynamic text: %s", .{state.text.data.str.ptr}), 10, 500, 30, rl.Color.green);
 
-    const screenWidth = rl.getScreenWidth();
-    const screenHeight = rl.getScreenHeight();
+    const mode_name = state.gbuffer_texture_type.getName();
+    rl.drawText(rl.textFormat("Gbuffer - %s", .{ mode_name }), 10, 350, 30, rl.Color.green);
+
+    const screenWidth = state.gbuffer.w;
+    const screenHeight = state.gbuffer.h;
     rl.drawText(rl.textFormat("%dx%d", .{ screenWidth, screenHeight }), 10, 90, 30, rl.Color.green);
 
     drawCursor();
@@ -738,7 +738,7 @@ pub fn main() anyerror!void {
         .render_target = loadRenderTextureDepthTex(window_width, window_height),
         .picking_texture = loadPickingTexture(window_width, window_height),
         .objects = std.ArrayList(scene.SceneObject).init(allocator),
-        .gbuffer = gpu.GBuffer.init(window_width, window_height),
+        .gbuffer = gpu.GBuffer.init(rl.gl.rlGetFramebufferWidth(), rl.gl.rlGetFramebufferHeight()),
         .gbuffer_shader = rl.loadShader("res/shaders/gbuffer.vs.glsl", "res/shaders/gbuffer.fs.glsl"),
         .deferred_shading_shader = rl.loadShader("res/shaders/deferred_shading.vs.glsl", "res/shaders/deferred_shading.fs.glsl"),
     };

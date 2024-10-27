@@ -66,8 +66,15 @@ pub const GBuffer = struct {
     normals: u32,
     positions: u32,
     depth: u32,
+    
+    w: i32,
+    h: i32,
 
-    pub fn init(width: i32, height: i32) @This() {
+    pub fn init(w: i32, h: i32) @This() {
+        const scaled = asScaledFrameSize(w, h);
+        const width = scaled[0];
+        const height = scaled[1];
+
         const framebuffer = rl.gl.rlLoadFramebuffer();
         if (framebuffer == 0) {
             rl.traceLog(rl.TraceLogLevel.log_error, "Failed to create gbuffer.");
@@ -102,27 +109,50 @@ pub const GBuffer = struct {
             .normals = normalTex,
             .positions = positionsTex,
             .depth = depthTex,
+            .w = width,
+            .h = height,
         };
     }
 
-    pub fn copyDepthTo(self: @This(), target: u32) void {
+    pub fn copyDepthToMain(self: @This()) void {
         rl.gl.rlBindFramebuffer(GL_READ_FRAMEBUFFER, self.framebuffer);
-        rl.gl.rlBindFramebuffer(GL_DRAW_FRAMEBUFFER, target);
-        const w = rl.getScreenWidth();
-        const h = rl.getScreenHeight();
-        rl.gl.rlBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_DEPTH_BUFFER_BIT);
-        rl.gl.rlDisableFramebuffer();
+        rl.gl.rlBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+
+        const main_size = getMainFrameSize();
+        rl.gl.rlBlitFramebuffer(0, 0, self.w, self.h, 0, 0, main_size[0], main_size[1], GL_DEPTH_BUFFER_BIT);
+
+        rl.gl.rlBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+        rl.gl.rlBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     }
 
     pub fn begin(self: @This()) void {
-        rl.gl.rlEnableFramebuffer(self.framebuffer);
+        zgl.bindFramebuffer(zgl.FRAMEBUFFER, self.framebuffer);
+        rl.gl.rlViewport(0, 0, self.w, self.h);
     }
 
     pub fn clear(_: @This()) void {
+        rl.gl.rlClearColor(0, 0, 0, 0);
         rl.gl.rlClearScreenBuffers();
     }
 
     pub fn end(_: @This()) void {
-        rl.gl.rlDisableFramebuffer();
+        zgl.bindFramebuffer(zgl.FRAMEBUFFER, 0);
+        const main_size = getMainFrameSize();
+        rl.gl.rlViewport(0, 0, main_size[0], main_size[1]);
+    }
+    
+    fn getMainFrameSize() [2]i32 {
+        return asScaledFrameSize(rl.gl.rlGetFramebufferWidth(), rl.gl.rlGetFramebufferHeight());
+    }
+    
+    fn asScaledFrameSize(w: i32, h: i32) [2]i32 {
+        const dpi = rl.getWindowScaleDPI();
+        const scale_x = dpi.x;
+        const scale_y = dpi.y;
+
+        const fbWidth: f32 = @floatFromInt(w);
+        const fbHeight: f32 = @floatFromInt(h);
+        
+        return [2]i32 { @intFromFloat(fbWidth  * scale_x), @intFromFloat(fbHeight  * scale_y) };
     }
 };
