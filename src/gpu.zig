@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const rl = @import("raylib");
 const zopengl = @import("zopengl");
 const zgl = zopengl.bindings;
@@ -66,7 +67,7 @@ pub const GBuffer = struct {
     normals: u32,
     positions: u32,
     depth: u32,
-    
+
     w: i32,
     h: i32,
 
@@ -140,19 +141,26 @@ pub const GBuffer = struct {
         const main_size = getMainFrameSize();
         rl.gl.rlViewport(0, 0, main_size[0], main_size[1]);
     }
-    
+
     fn getMainFrameSize() [2]i32 {
         return asScaledFrameSize(rl.gl.rlGetFramebufferWidth(), rl.gl.rlGetFramebufferHeight());
     }
-    
-    fn asScaledFrameSize(w: i32, h: i32) [2]i32 {
-        const dpi = rl.getWindowScaleDPI();
-        const scale_x = dpi.x;
-        const scale_y = dpi.y;
 
-        const fbWidth: f32 = @floatFromInt(w);
-        const fbHeight: f32 = @floatFromInt(h);
-        
-        return [2]i32 { @intFromFloat(fbWidth  * scale_x), @intFromFloat(fbHeight  * scale_y) };
+    fn asScaledFrameSize(w: i32, h: i32) [2]i32 {
+        if (comptime builtin.target.os.tag == .macos) {
+            const dpi = rl.getWindowScaleDPI();
+            const scale_x = dpi.x;
+            const scale_y = dpi.y;
+
+            const fb_width: f32 = @floatFromInt(w);
+            const fb_height: f32 = @floatFromInt(h);
+
+            const scaled_width: i32 = @intFromFloat(fb_width * scale_x);
+            const scaled_height: i32 = @intFromFloat(fb_height * scale_y);
+
+            return [2]i32{ scaled_width, scaled_height };
+        } else {
+            return [2]i32{ w, h };
+        }
     }
 };
