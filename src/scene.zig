@@ -153,7 +153,7 @@ pub const SceneObject = struct {
     }
 };
 
-pub fn createLight(p: rl.Vector3, color: rl.Color, radius: f32) SceneObject {
+pub fn createPointLight(p: rl.Vector3, color: rl.Color, radius: f32) SceneObject {
     return SceneObject.init(p, ObjectData{ .Light = .{
         .Point = .{
             .radius = radius,

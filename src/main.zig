@@ -586,9 +586,6 @@ fn renderDeferred() void {
         rl.gl.rlDisableColorBlend();
         defer rl.gl.rlEnableColorBlend();
 
-        rl.beginShaderMode(state.gbuffer_shader);
-        defer rl.endShaderMode();
-
         rl.beginMode3D(state.main_camera);
         defer rl.endMode3D();
 
@@ -633,6 +630,7 @@ fn render() !void {
     renderDeferred();
 
     // render visual tools
+    // :::DEBUG::: render visual tools
     rl.beginMode3D(state.main_camera);
     rl.drawGrid(100.0, 1.0);
 
@@ -688,7 +686,7 @@ fn render() !void {
     rl.drawText(rl.textFormat("Dynamic text: %s", .{state.text.data.str.ptr}), 10, 500, 30, rl.Color.green);
 
     const mode_name = state.gbuffer_texture_type.getName();
-    rl.drawText(rl.textFormat("Gbuffer - %s", .{ mode_name }), 10, 350, 30, rl.Color.green);
+    rl.drawText(rl.textFormat("Gbuffer - %s", .{mode_name}), 10, 350, 30, rl.Color.green);
 
     const screenWidth = state.gbuffer.w;
     const screenHeight = state.gbuffer.h;
@@ -796,9 +794,9 @@ pub fn main() anyerror!void {
     error_model.scale = Vector3.one().scale(50);
     error_model.rotations = Vector3.init(0.0, 0.0, 3.14 / 2.0);
     try state.objects.append(error_model);
-    try state.objects.append(scene.createLight(Vector3.init(3, 2, 0), Color.white, 5.0));
-    try state.objects.append(scene.createLight(Vector3.init(-5, 2, 0), Color.white, 5.0));
-    try state.objects.append(scene.createLight(Vector3.init(0, 2, 7), Color.white, 5.0));
+    try state.objects.append(scene.createPointLight(Vector3.init(3, 2, 0), Color.white, 20));
+    try state.objects.append(scene.createPointLight(Vector3.init(-5, 2, 0), Color.white, 20));
+    try state.objects.append(scene.createPointLight(Vector3.init(0, 2, 7), Color.white, 20));
 
     log.info("MODELS: Models loaded.", .{});
 

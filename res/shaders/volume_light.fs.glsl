@@ -25,7 +25,7 @@ void main() {
     vec3 albedo = texture(gAlbedoSpec, screenCoord).rgb;
     float specularStrength = texture(gAlbedoSpec, screenCoord).a;
 
-    vec3 ambient = albedo * 0.2;
+    vec3 ambient = albedo * 0.15;
 
     vec3 lightDir = normalize(lightPos - fragPosition);
     float lightDistance = distance(lightPos, fragPosition);
