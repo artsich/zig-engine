@@ -773,11 +773,11 @@ pub fn main() anyerror!void {
     wall.rotations = Vector3.init(3.14 / 2.0, 0.0, 0.0);
     try state.objects.append(wall);
 
-    var wall2 = scene.createPlane(Vector3.init(10, 5, -5), Vector2.init(10.0, 10.0), Color.dark_gray);
+    var wall2 = scene.createPlane(Vector3.init(7.65, 5.0, -0.84), Vector2.init(10.0, 10.0), Color.dark_gray);
     wall2.rotations = Vector3.init(3.14 / 2.0, -1.0, 0.0);
     try state.objects.append(wall2);
 
-    var wall3 = scene.createPlane(Vector3.init(-10, 5, -5), Vector2.init(10.0, 10.0), Color.dark_gray);
+    var wall3 = scene.createPlane(Vector3.init(-7.65, 5.0, -0.84), Vector2.init(10.0, 10.0), Color.dark_gray);
     wall3.rotations = Vector3.init(3.14 / 2.0, 1.0, 0.0);
     try state.objects.append(wall3);
 

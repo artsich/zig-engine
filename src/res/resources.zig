@@ -69,6 +69,8 @@ fn init_default_resources() void {
 
     instanced_shader = rl.loadShader("res/shaders/instanced_shader.vs.glsl", "res/shaders/instanced_shader.fs.glsl");
     instanced_shader.locs[@intFromEnum(rl.ShaderLocationIndex.shader_loc_matrix_model)] = rl.getShaderLocationAttrib(instanced_shader, "instanceTransform");
+
+    log.info("[RES] Default resources initialized...", .{});
 }
 
 var res_map: std.StringHashMap(*anyopaque) = undefined;
@@ -135,7 +137,7 @@ pub fn load(comptime T: type, path: []const u8, alloc: Allocator) *Res(T) {
     res.*.reload();
     fw.attach(T, res);
 
-    log.info("[RES] `%s` loaded ", .{path.ptr});
+    log.info("[RES]:[" ++ @typeName(T) ++ "] - `%s` loaded ", .{path.ptr});
     return res;
 }
 

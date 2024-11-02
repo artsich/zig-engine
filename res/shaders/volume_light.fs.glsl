@@ -43,6 +43,6 @@ void main() {
     float spec = pow(max(dot(normal, halfwayDir), 0.0), 32.0);
     vec3 specular = vec3(specularStrength * spec * attenuation);
 
-    vec3 result = diffuse * lightColor;
+    vec3 result = (ambient * attenuation) + diffuse * lightColor;
     finalColor = vec4(result, 1.);
 }
